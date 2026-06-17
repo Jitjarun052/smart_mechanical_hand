@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'dashboard_screen.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -50,7 +51,13 @@ class _SignInScreenState extends State<SignInScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context);
+              Navigator.pop(context); // ปิดป๊อปอัปแจ้งเตือนสำเร็จ
+
+              // 🚀 สั่งเปลี่ยนหน้าข้ามไป Dashboard ตัวใหม่ของเรา
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const DashboardScreen()),
+              );
             },
             child: const Text('ตกลง'),
           ),
@@ -140,6 +147,7 @@ class _SignInScreenState extends State<SignInScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Text("ยังไม่มีบัญชีใช้งาน? "),
+                  // onPressed: _handleMockSignUp,
                   GestureDetector(
                     onTap: () {},
                     child: const Text(
