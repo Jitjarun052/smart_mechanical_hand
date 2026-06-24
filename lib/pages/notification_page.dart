@@ -56,6 +56,7 @@ class NotificationPage extends StatelessWidget {
           style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 18),
         ),
         centerTitle: true,
+        
       ),
       body: ListView.builder(
         padding: const EdgeInsets.all(16.0),
