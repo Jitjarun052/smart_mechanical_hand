@@ -41,7 +41,7 @@ class NotificationPage extends StatelessWidget {
         'isUnread': false,
       },
     ];
-
+    
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
