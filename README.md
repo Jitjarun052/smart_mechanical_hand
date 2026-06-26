@@ -111,3 +111,5 @@ dependencies:
   flutter:
     sdk: flutter
   fl_chart: ^0.70.0 # แพ็กเกจสำหรับวาดกราฟเส้นสถิตลองศานิ้วมือ
+
+  #test git push
