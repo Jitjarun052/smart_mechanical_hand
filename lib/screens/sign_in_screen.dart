@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../doctor/doctor_dashboard_page.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_screen.dart';
 import 'signup_screen.dart';
@@ -27,7 +28,7 @@ class _SignInScreenState extends State<SignInScreen> {
     }
 
     if (email == 'admin@health.com' && password == '123456') {
-      _showLoginSuccess('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
+      _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
     } else if (email == 'patient@health.com' && password == '123456') {
       _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล');
     } else {
@@ -57,6 +58,34 @@ class _SignInScreenState extends State<SignInScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const DashboardScreen()),
+              );
+            },
+            child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+  void _showLoginSuccessDoctor(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Colors.green),
+            SizedBox(width: 8),
+            Text('เข้าสู่ระบบสำเร็จ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // ปิดป๊อปอัป
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const DoctorDashboardPage()),
               );
             },
             child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
