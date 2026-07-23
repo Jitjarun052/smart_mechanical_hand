@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'patient_info_page.dart';
 import 'doctor_info_page.dart';
-// 🦾 ✨ [ADDED]: นำเข้าหน้าลงทะเบียนอุปกรณ์เพื่อเชื่อมการทำงานตรงๆ ตามที่คุยกันไว้
 import 'device_setting_page.dart'; 
+import '../screens/sign_in_screen.dart'; // 👈 นำเข้าหน้า SignInScreen
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -86,7 +86,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 20),
 
-          // 🦾 การ์ดเชิญชวนผูกอุปกรณ์กรณีผู้ป่วยกดข้ามขั้นตอนมาตอน Register
+          // 🦾 การ์ดเชิญชวนผูกอุปกรณ์
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24.0),
             child: Column(
@@ -95,7 +95,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 _buildSectionTitle('อุปกรณ์ของฉัน'),
                 const SizedBox(height: 12),
                 
-                // 🛠️ [✨ อัปเดตจุดเปลี่ยน]: ลบฟังก์ชันขี่ BottomSheet ออก แล้วสั่งเปิดหน้าใหม่ตรงๆ คลีนสะใจแน่นอน
                 GestureDetector(
                   onTap: () {
                     Navigator.push(
@@ -305,6 +304,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 32),
 
+                // 🔴 ปุ่มออกจากระบบบัญชี
                 Card(
                   elevation: 0,
                   shape: RoundedRectangleBorder(
@@ -316,7 +316,70 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   color: Colors.red.withOpacity(0.05),
                   child: ListTile(
-                    onTap: () => Navigator.pop(context),
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (BuildContext context) {
+                          return AlertDialog(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            title: const Row(
+                              children: [
+                                Icon(Icons.logout_rounded, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text(
+                                  'ยืนยันการออกจากระบบ',
+                                  style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            content: const Text(
+                              'คุณต้องการออกจากระบบบัญชีผู้ใช้นี้ใช่หรือไม่?',
+                              style: TextStyle(fontSize: 14),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text(
+                                  'ยกเลิก',
+                                  style: TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                              ElevatedButton(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  elevation: 0,
+                                ),
+                                onPressed: () {
+                                  Navigator.pop(context);
+                                  Navigator.pushAndRemoveUntil(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => const SignInScreen(),
+                                    ),
+                                    (route) => false,
+                                  );
+                                },
+                                child: const Text(
+                                  'ออกจากระบบ',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      );
+                    },
                     leading: const Icon(
                       Icons.logout_rounded,
                       color: Colors.red,

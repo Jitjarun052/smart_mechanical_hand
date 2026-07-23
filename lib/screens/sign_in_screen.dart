@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import '../api/auth_service.dart'; // 👈 Import ตัวจัดการ API
 import '../doctor/doctor_dashboard_page.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_screen.dart';
 import 'signup_screen.dart';
+import 'forgot_password_screen.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -15,8 +17,10 @@ class _SignInScreenState extends State<SignInScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  bool _isLoading = false;
 
-  void _handleMockSignIn() {
+  // 🔌 ฟังก์ชันเรียกใช้ API จาก AuthService[cite: 11]
+  Future<void> _handleSignIn() async {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
@@ -27,20 +31,56 @@ class _SignInScreenState extends State<SignInScreen> {
       return;
     }
 
-    if (email == 'admin@health.com' && password == '123456') {
-      _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
-    } else if (email == 'patient@health.com' && password == '123456') {
-      _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล');
+    setState(() => _isLoading = true);
+
+    // 🚀 เรียกใช้ AuthService[cite: 11]
+    final result = await AuthService.login(email, password);
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+
+    if (result['success'] == true) {
+      final String role = result['role'];
+
+      if (role == 'doctor') {
+        _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
+      } else if (role == 'patient') {
+        _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล');
+      } else {
+        _showErrorDialog('ไม่พบสิทธิ์การใช้งานที่ถูกต้อง');
+      }
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('อีเมลหรือรหัสผ่านจำลองไม่ถูกต้อง (ลองใช้อีเมล patient@health.com รหัส 123456)')),
-      );
+      _showErrorDialog(result['message']);
     }
+  }
+
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 8),
+            Text('แจ้งเตือน', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: Text(message, style: const TextStyle(fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showLoginSuccess(String message) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
@@ -54,8 +94,8 @@ class _SignInScreenState extends State<SignInScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // ปิดป๊อปอัป
-              Navigator.push(
+              Navigator.pop(context);
+              Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (context) => const DashboardScreen()),
               );
@@ -66,9 +106,11 @@ class _SignInScreenState extends State<SignInScreen> {
       ),
     );
   }
+
   void _showLoginSuccessDoctor(String message) {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
@@ -82,8 +124,8 @@ class _SignInScreenState extends State<SignInScreen> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.pop(context); // ปิดป๊อปอัป
-              Navigator.push(
+              Navigator.pop(context);
+              Navigator.pushReplacement(
                 context,
                 MaterialPageRoute(builder: (context) => const DoctorDashboardPage()),
               );
@@ -111,9 +153,8 @@ class _SignInScreenState extends State<SignInScreen> {
           child: SingleChildScrollView(
             padding: const EdgeInsets.symmetric(horizontal: 30.0, vertical: 24.0),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, // เปลี่ยนเป็นชิดซ้ายตามสไตล์ SignUp
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 🔝 ส่วนของโลโก้แบบหรูหราลอยตัวกึ่งกลาง
                 Center(
                   child: Column(
                     children: [
@@ -147,7 +188,6 @@ class _SignInScreenState extends State<SignInScreen> {
                 ),
                 const SizedBox(height: 48),
 
-                // 📝 1. ช่องกรอก Email
                 _buildInputLabel('อีเมลผู้ใช้งาน (Email)'),
                 TextField(
                   controller: _emailController,
@@ -155,9 +195,8 @@ class _SignInScreenState extends State<SignInScreen> {
                   style: const TextStyle(fontSize: 14),
                   decoration: _buildInputDecoration('กรอกอีเมลของคุณ', Icons.email_outlined),
                 ),
-                const SizedBox(height: 24),
 
-                // 📝 2. ช่องกรอก Password
+                const SizedBox(height: 40),
                 _buildInputLabel('รหัสผ่าน (Password)'),
                 TextField(
                   controller: _passwordController,
@@ -178,9 +217,24 @@ class _SignInScreenState extends State<SignInScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 40),
 
-                // 🔘 ปุ่มเข้าสู่ระบบแถวยาวโค้งมนระนาบเดียวกันกับหน้า SignUp
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const ForgotPasswordScreen()),
+                      );
+                    },
+                    child: const Text(
+                      'ลืมรหัสผ่าน?',
+                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+
                 SizedBox(
                   width: double.infinity,
                   height: 52,
@@ -188,19 +242,24 @@ class _SignInScreenState extends State<SignInScreen> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppTheme.primaryColor,
                       foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), // เปลี่ยนเป็น 16 ให้รับเข้าเซ็ต
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                       elevation: 0,
                     ),
-                    onPressed: _handleMockSignIn,
-                    child: const Text(
-                      'เข้าสู่ระบบ',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
+                    onPressed: _isLoading ? null : _handleSignIn,
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2.5),
+                          )
+                        : const Text(
+                            'เข้าสู่ระบบ',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 28),
 
-                // ส่วนสลับย้ายไปสมัครสมาชิก
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -227,7 +286,6 @@ class _SignInScreenState extends State<SignInScreen> {
     );
   }
 
-  // Helper สร้างป้าย Label เหนือช่องกรอกดึงดีไซน์เข้าคู่ SignUp
   Widget _buildInputLabel(String label) {
     return Padding(
       padding: const EdgeInsets.only(left: 4.0, bottom: 8.0),
@@ -238,7 +296,6 @@ class _SignInScreenState extends State<SignInScreen> {
     );
   }
 
-  // Helper คุมความสวยงามของกรอบและรูปทรงกล่องกรอกให้ถอดแบบเดียวกันเป๊ะๆ
   InputDecoration _buildInputDecoration(String hint, IconData icon) {
     return InputDecoration(
       hintText: hint,

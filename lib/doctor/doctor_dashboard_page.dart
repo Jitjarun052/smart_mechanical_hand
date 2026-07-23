@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'patient_detail_page.dart';
 import 'edit_profile_page.dart'; 
+import '../screens/sign_in_screen.dart';
 
 class DoctorDashboardPage extends StatefulWidget {
   const DoctorDashboardPage({super.key});
@@ -11,13 +12,12 @@ class DoctorDashboardPage extends StatefulWidget {
 }
 
 class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTickerProviderStateMixin {
-  int _currentIndex = 0; // ✨ สำหรับจำจำสเตตัสว่าคุณหมอกำลังเลือกเปิดแท็บไหนอยู่
+  int _currentIndex = 0;
   
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
   late AnimationController _refreshAnimationController;
 
-  // 🏥 ม็อคข้อมูลรายชื่อผู้ป่วยเดิมของคุณ
   final List<Map<String, dynamic>> _myPatients = [
     {'id': 'P001', 'name': 'จิตร์จรัญ คืนมาเมือง', 'age': '65', 'symptom': 'หลอดเลือดสมอง (Stroke) / อ่อนแรงซีกซ้าย', 'last_session': '17 มิ.ย. 2569', 'progress': '85%'},
     {'id': 'P002', 'name': 'สมชาย ใจดี', 'age': '58', 'symptom': 'กล้ามเนื้อเหยียดนิ้วมือหดเกร็ง', 'last_session': '15 มิ.ย. 2569', 'progress': '90%'},
@@ -42,21 +42,17 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
 
   @override
   Widget build(BuildContext context) {
-    // 🎨 ลิสต์รายการหน้าจอที่จะสลับเปลี่ยนตามแท็บด้านล่างที่คุณหมอกดเลือก
     final List<Widget> _doctorScreens = [
-      _buildMainDashboardTab(), // 🏠 แท็บที่ 1: หน้าหลักค้นหาผู้ป่วย
-      _buildHistoryTab(),       // 📊 แท็บที่ 2: หน้าประวัติฝึกรวม
-      _buildProfileSettingTab(), // ⚙️ แท็บที่ 3: หน้าตั้งค่าและแก้ไขโปรไฟล์หมอ
+      _buildMainDashboardTab(), 
+      _buildHistoryTab(),       
+      _buildProfileSettingTab(), 
     ];
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
-      // 🚫 [REMOVE TOPBAR]: ถอด appBar: AppBar(...) ออกถาวรเพื่อให้หน้าจอโปร่งโล่งตาตามคำขอครับ!
       body: SafeArea(
-        child: _doctorScreens[_currentIndex], // พ่นหน้าจอตามดัชนีแท็บที่กดเลือก
+        child: _doctorScreens[_currentIndex],
       ),
-      
-      // 🧡 [ADDED ✨]: แถบเนวิเกชันด้านล่าง ดีไซน์สีส้มอิฐ-น้ำตาล อิงตามรูปต้นแบบเป๊ะๆ
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           boxShadow: [
@@ -67,15 +63,15 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           currentIndex: _currentIndex,
           onTap: (index) {
             setState(() {
-              _currentIndex = index; // สลับสเตทหน้าจอ
+              _currentIndex = index;
             });
           },
           backgroundColor: Colors.white,
-          selectedItemColor: AppTheme.primaryColor, // สีส้มอิฐตอนเลือกใช้งาน
-          unselectedItemColor: Colors.brown.shade300, // สีน้ำตาลจางตอนไม่ได้เลือก
+          selectedItemColor: AppTheme.primaryColor,
+          unselectedItemColor: Colors.brown.shade300,
           selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
           unselectedLabelStyle: const TextStyle(fontSize: 12),
-          type: BottomNavigationBarType.fixed, // ล็อกแถบให้นิ่งไม่ให้ขยับดึ๋งดั๋ง
+          type: BottomNavigationBarType.fixed,
           items: const [
             BottomNavigationBarItem(
               icon: Padding(
@@ -104,7 +100,7 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
-  // ==================== 🏠 แท็บที่ 1: โครงสร้างหน้า Dashboard ค้นหาเดิมของคุณ ====================
+  // ==================== 🏠 แท็บที่ 1: หน้า Dashboard ค้นหาผู้ป่วย ====================
   Widget _buildMainDashboardTab() {
     final filteredPatients = _myPatients.where((patient) {
       return patient['name']!.toLowerCase().contains(_searchQuery.toLowerCase()) ||
@@ -230,9 +226,8 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
-  // ==================== 📊 แท็บที่ 2: หน้าประวัติฝึกภาพรวม (Log ย้อนหลังรวมทุกคน) ====================
+  // ==================== 📊 แท็บที่ 2: หน้าประวัติฝึกภาพรวม ====================
   Widget _buildHistoryTab() {
-    // 📋 ม็อคข้อมูลรายการฝึกซ้อมล่าสุดรวมของผู้ป่วยทุกคน (ล้อตามโครงสร้างตารางเซสชันใน MySQL)
     final List<Map<String, dynamic>> _allHistoryLogs = [
       {
         'patient_name': 'จิตร์จรัญ คืนมาเมือง',
@@ -281,7 +276,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ส่วนหัวของหน้าประวัติฝึก
           const Text(
             'ประวัติการฝึกซ้อมรวม 📊',
             style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
@@ -293,15 +287,12 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           ),
           const SizedBox(height: 24),
 
-          // 📜 ลิสต์รายการการฝึกซ้อมเรียงตามไทม์ไลน์
           ListView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             itemCount: _allHistoryLogs.length,
             itemBuilder: (context, index) {
               final log = _allHistoryLogs[index];
-              
-              // 🚀 [แก้ไขตรงนี้]: เปลี่ยน Container เดิม เป็น Card + InkWell เพื่อให้กดคลิกได้
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 8),
                 elevation: 0,
@@ -309,20 +300,18 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                   borderRadius: BorderRadius.circular(16),
                   side: BorderSide(color: Colors.grey.withOpacity(0.12)),
                 ),
-                clipBehavior: Clip.antiAlias, // คุมให้เอฟเฟกต์คลิกไม่ล้นขอบมน
+                clipBehavior: Clip.antiAlias,
                 child: InkWell(
                   onTap: () {
-                    // 🏥 สับรางแปลงข้อมูลเพื่อให้เข้าคู่กับหน้า PatientDetailPage
                     final patientTarget = {
                       'id': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' ? 'P001' : 'P002',
                       'name': log['patient_name'],
                       'age': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' ? '65' : '58',
                       'symptom': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' 
-                          ? 'หลoderดสมอง (Stroke) / อ่อนแรงซีกซ้าย'
+                          ? 'หลอดเลือดสมอง (Stroke) / อ่อนแรงซีกซ้าย'
                           : 'กล้ามเนื้อเหยียดนิ้วมือหดเกร็ง',
                     };
 
-                    // 📈 พุ่งตัวไปสู่หน้าประวัติกราฟเชิงลึกรายบุคคลทันที!
                     Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -331,11 +320,10 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                     );
                   },
                   child: Padding(
-                    padding: const EdgeInsets.all(16.0), // ย้าย padding จาก Container มาไว้ตรงนี้
+                    padding: const EdgeInsets.all(16.0),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // ไอคอนบ่งบอกสถานะการฝึกแยกตามสีสเตตัส (โค้ดเดิมของคุณ)
                         Container(
                           padding: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
@@ -350,7 +338,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                         ),
                         const SizedBox(width: 16),
                         
-                        // ข้อมูลรายละเอียดของเซสชันฝึก (โค้ดเดิมของคุณ)
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,7 +366,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                           ),
                         ),
                         
-                        // สรุปตัวเลขผลลัพธ์องศาที่ทำได้ฝั่งขวาจัด (โค้ดเดิมของคุณ)
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
@@ -410,7 +396,7 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
-  // ==================== ⚙️ แท็บที่ 3: หน้าตั้งค่า + แก้ไขโปรไฟล์หมอ (ตามที่คุณขอเพิ่มเติม) ====================
+  // ==================== ⚙️ แท็บที่ 3: หน้าตั้งค่า + แก้ไขโปรไฟล์หมอ ====================
   Widget _buildProfileSettingTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
@@ -420,7 +406,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           const Text('ตั้งค่าระบบ & โปรไฟล์', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
           const SizedBox(height: 24),
           
-          // 👨‍⚕️ ส่วนรูปและการ์ดจัดการข้อมูลส่วนตัวหมอ
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -461,16 +446,79 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           ),
           const SizedBox(height: 24),
 
-          // 🚪 ปุ่มกดออกจากระบบกลับไปหน้า Login
+          // 🚪 [UPDATED]: ปุ่มกดออกจากระบบกลับไปหน้า Login พร้อม Dialog ยืนยัน
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.red.shade100)),
-            color: Colors.red.shade50.withOpacity(0.5), // ปรับค่าความโปร่งแสงเป็น 50% แบบถูกต้องตามหลัก Flutter
+            color: Colors.red.shade50.withOpacity(0.5),
             child: ListTile(
               leading: Icon(Icons.logout_rounded, color: Colors.red.shade700),
               title: Text('ออกจากระบบ (Logout)', style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
               trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.red),
-              onTap: () => Navigator.pop(context), // เด้งออกหน้า Login สวยๆ
+              onTap: () {
+                showDialog(
+                  context: context,
+                  builder: (BuildContext context) {
+                    return AlertDialog(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      title: const Row(
+                        children: [
+                          Icon(Icons.logout_rounded, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text(
+                            'ยืนยันการออกจากระบบ',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      content: const Text(
+                        'คุณต้องการออกจากระบบบัญชีแพทย์/นักกายภาพบำบัดใช่หรือไม่?',
+                        style: TextStyle(fontSize: 14),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text(
+                            'ยกเลิก',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 0,
+                          ),
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.pushAndRemoveUntil(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const SignInScreen(),
+                              ),
+                              (route) => false,
+                            );
+                          },
+                          child: const Text(
+                            'ออกจากระบบ',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
+                );
+              },
             ),
           )
         ],
@@ -478,7 +526,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
-  // Widget ตัวสร้างการ์ดสถิติเดิม
   Widget _buildStatCard(String title, String value, IconData icon, Color color) {
     return Expanded(
       child: Container(
