@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import '../api/auth_service.dart';
+import '../api/history_service.dart';
+import '../api/device_service.dart'; // 👈 นำเข้า DeviceService
 import '../theme/app_theme.dart';
 import '../pages/history_page.dart';
 import '../pages/settings_page.dart';
 import '../pages/training_page.dart';
 import '../pages/quick_history_page.dart';
-import '../pages/speed_setting_page.dart';
 import '../pages/contact_doctor_page.dart';
 import '../pages/device_setting_page.dart';
+import '../api/api_config.dart';
 
 class BarButtonData {
   final IconData icon;
@@ -15,7 +18,9 @@ class BarButtonData {
 }
 
 class DashboardScreen extends StatefulWidget {
-  const DashboardScreen({super.key});
+  final String? userToken;
+
+  const DashboardScreen({super.key, this.userToken});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -24,6 +29,18 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   int _currentIndex = 0;
 
+  bool _isLoading = true;
+  int? _currentUserId;
+  String _userName = 'ผู้ป่วย';
+  String? _userImage;
+  
+  // ⚡ ตัวแปรเก็บข้อมูลอุปกรณ์จาก DB
+  String? _deviceSerialNumber;
+  String? _deviceName;
+  int? _deviceStatus; // 0 = ปกติ, 1 = ถูกระงับ
+
+  List<Map<String, dynamic>> _historyList = [];
+
   static const List<BarButtonData> _buttonItems = [
     BarButtonData(icon: Icons.home_rounded, label: 'หน้าหลัก'),
     BarButtonData(icon: Icons.bar_chart_rounded, label: 'ประวัติฝึก'),
@@ -31,23 +48,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
   ];
 
   @override
-  Widget build(BuildContext context) {
-    String? mockDeviceSerialNumber = null; // สถานะ: ยังไม่ได้ผูกอุปกรณ์
-    final bool isDeviceRegistered = mockDeviceSerialNumber != null;
+  void initState() {
+    super.initState();
+    _fetchDashboardData();
+  }
 
-    final List<Map<String, String>> mockHistory = [
-      {'date': '17 มิ.ย. 2569', 'time': '15 นาที', 'score': '85%'},
-      {'date': '16 มิ.ย. 2569', 'time': '20 นาที', 'score': '90%'},
-      {'date': '15 มิ.ย. 2569', 'time': '12 นาที', 'score': '78%'},
-    ];
+  Future<void> _fetchDashboardData() async {
+    setState(() => _isLoading = true);
+
+    // 1. ดึงข้อมูล Profile ผู้ป่วย
+    if (widget.userToken != null && widget.userToken!.isNotEmpty) {
+      final userResult = await AuthService.getMe(widget.userToken!);
+      if (userResult['success'] == true) {
+        final userData = userResult['user'];
+        final int? userId = userData['user_id'];
+        final String? imageName = userData['image'];
+
+        if (mounted) {
+          setState(() {
+            _userName = '${userData['firstname']} ${userData['lastname']}';
+            _userImage = ApiConfig.getImageUrl(imageName);
+            _currentUserId = userId;
+          });
+        }
+
+        // 2. ⚡ ดึงข้อมูลอุปกรณ์ที่ผูกกับ user_id จากตาราง device
+        if (userId != null) {
+          final deviceData = await DeviceService.getDeviceByUserId(userId);
+          if (deviceData != null && mounted) {
+            setState(() {
+              _deviceSerialNumber = deviceData['serial_number'];
+              _deviceName = deviceData['device_name'];
+              _deviceStatus = deviceData['device_status'];
+            });
+          }
+        }
+      }
+    }
+
+    // 3. ดึงประวัติฝึก
+    final historyData = await HistoryService.getHistoryList();
+
+    if (mounted) {
+      setState(() {
+        _historyList = historyData;
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // ⚡ เช็กว่ามีการผูกอุปกรณ์ และสถานะเครื่องไม่ถูกระงับ (device_status == 0)
+    final bool isDeviceRegistered = _deviceSerialNumber != null && _deviceSerialNumber!.isNotEmpty;
+    final bool isDeviceActive = isDeviceRegistered && _deviceStatus == 0;
 
     final List<Widget> pages = [
-      // 🏠 หน้าหลักดีไซน์ใหม่พรีเมียม
       SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🟠 1. ส่วนทักทายดีไซน์ใหม่สไตล์แผง Header ไล่เฉดสีส้มพรีเมียม
+            // 🟠 1. Header
             Container(
               width: double.infinity,
               padding: const EdgeInsets.only(left: 24, right: 24, top: 60, bottom: 32),
@@ -67,22 +128,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     children: [
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: const [
-                          Text(
+                        children: [
+                          const Text(
                             'สวัสดีครับ 👋',
                             style: TextStyle(fontSize: 16, color: Colors.white70, fontWeight: FontWeight.w500),
                           ),
-                          SizedBox(height: 4),
+                          const SizedBox(height: 4),
                           Text(
-                            'คุณผู้ป่วย',
-                            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white),
+                            _isLoading ? 'กำลังโหลด...' : 'คุณ$_userName',
+                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Colors.white),
                           ),
                         ],
                       ),
                       CircleAvatar(
-                        radius: 24,
+                        radius: 26,
                         backgroundColor: Colors.white.withOpacity(0.2),
-                        child: const Icon(Icons.person_rounded, color: Colors.white, size: 28),
+                        backgroundImage: (_userImage != null && _userImage!.isNotEmpty)
+                            ? NetworkImage(_userImage!)
+                            : null,
+                        child: (_userImage == null || _userImage!.isEmpty)
+                            ? const Icon(Icons.person_rounded, color: Colors.white, size: 28)
+                            : null,
                       )
                     ],
                   ),
@@ -100,36 +166,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ⚡ 2. ส่วนสถานะบลูทูธ/อุปกรณ์ (เคลียร์คำว่า habits บั๊กพิมพ์เกินออกแล้ว)
+                  // ⚡ 2. ส่วนแสดงสถานะอุปกรณ์ที่ดึงจาก DB จริง
                   InkWell(
                     onTap: () {
-                      if (isDeviceRegistered) {
-                        _showDeviceBottomSheet(context, mockDeviceSerialNumber);
+                      if (isDeviceActive) {
+                        _showDeviceBottomSheet(context, _deviceName, _deviceSerialNumber);
                       } else {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const DeviceSettingPage()),
-                        );
+                          MaterialPageRoute(builder: (context) => DeviceSettingPage(userId: _currentUserId)),
+                        ).then((_) => _fetchDashboardData());
                       }
                     },
                     borderRadius: BorderRadius.circular(20),
                     child: Container(
                       padding: const EdgeInsets.all(18.0),
                       decoration: BoxDecoration(
-                        color: isDeviceRegistered 
+                        color: isDeviceActive 
                             ? const Color(0xFF2ECC71).withOpacity(0.06) 
                             : Colors.orange.shade50.withOpacity(0.5),
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: isDeviceRegistered ? Colors.green.shade400 : Colors.orangeAccent.shade200,
+                          color: isDeviceActive ? Colors.green.shade400 : Colors.orangeAccent.shade200,
                           width: 1.5,
                         ),
                       ),
                       child: Row(
                         children: [
                           Icon(
-                            isDeviceRegistered ? Icons.bluetooth_connected_rounded : Icons.warning_amber_rounded, 
-                            color: isDeviceRegistered ? Colors.green.shade700 : Colors.orangeAccent.shade700, 
+                            isDeviceActive ? Icons.bluetooth_connected_rounded : Icons.warning_amber_rounded, 
+                            color: isDeviceActive ? Colors.green.shade700 : Colors.orangeAccent.shade700, 
                             size: 28
                           ),
                           const SizedBox(width: 14),
@@ -141,11 +207,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const Text('สถานะอุปกรณ์มือกล', style: TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary, fontSize: 15)),
                                 const SizedBox(height: 3),
                                 Text(
-                                  isDeviceRegistered 
-                                      ? '⚡ เชื่อมต่อถุงมืออัจฉริยะแล้ว (คลิกดูข้อมูล)' 
-                                      : '⚠️ ยังไม่ได้ลงทะเบียนถุงมือกล (คลิกเพื่อผูกอุปกรณ์)', 
+                                  isDeviceActive 
+                                      ? '⚡ เชื่อมต่อ ${_deviceName ?? "ถุงมืออัจฉริยะ"} แล้ว (คลิกดูข้อมูล)' 
+                                      : isDeviceRegistered && _deviceStatus == 1
+                                          ? '⛔ อุปกรณ์ถูกระงับการใช้งาน (ติดต่อเจ้าหน้าที่)'
+                                          : '⚠️ ยังไม่ได้ลงทะเบียนถุงมือกล (คลิกเพื่อผูกอุปกรณ์)', 
                                   style: TextStyle(
-                                    color: isDeviceRegistered ? Colors.green.shade800 : Colors.orange.shade900, 
+                                    color: isDeviceActive ? Colors.green.shade800 : Colors.orange.shade900, 
                                     fontWeight: FontWeight.w600, 
                                     fontSize: 12
                                   ),
@@ -153,14 +221,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ],
                             ),
                           ),
-                          Icon(Icons.arrow_forward_ios_rounded, size: 14, color: isDeviceRegistered ? Colors.green.withOpacity(0.5) : Colors.orangeAccent)
+                          Icon(Icons.arrow_forward_ios_rounded, size: 14, color: isDeviceActive ? Colors.green.withOpacity(0.5) : Colors.orangeAccent)
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 28),
 
-                  // 🦾 3. ปุ่มเริ่มโหมดฝึกซ้อม ดีไซน์ใหม่แบบ "Hero Banner" (แก้ไขจาก shadows เป็น boxShadow เรียบร้อย)
+                  // 🦾 3. ปุ่มเริ่มโหมดฝึกซ้อม
                   const Text('เมนูหลัก', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
                   const SizedBox(height: 14),
                   
@@ -189,17 +257,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
+                          children: const [
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               mainAxisAlignment: MainAxisAlignment.center,
-                              children: const [
+                              children: [
                                 Text('เริ่มโหมดฝึกซ้อม', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
                                 SizedBox(height: 4),
                                 Text('เปิดระบบคุมถุงมือและบันทึกผลสถิติ', style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500)),
                               ],
                             ),
-                            const Icon(Icons.play_circle_filled_rounded, color: Colors.white, size: 48),
+                            Icon(Icons.play_circle_filled_rounded, color: Colors.white, size: 48),
                           ],
                         ),
                       ),
@@ -207,7 +275,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 📊 4. เมนูย่อยแบบ Grid
+                  // 📊 4. เมนูย่อย
                   GridView.count(
                     crossAxisCount: 2, 
                     shrinkWrap: true,
@@ -217,49 +285,74 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     childAspectRatio: 1.5, 
                     children: [
                       _buildModernMenuCard(context, 'ประวัติย้อนหลัง', Icons.insert_chart_rounded, Colors.blue.shade700, const QuickHistoryPage()),
-                      _buildModernMenuCard(context, 'ติดต่อแพทย์', Icons.forum_rounded, Colors.teal.shade600, const ContactDoctorPage()),
+                      _buildModernMenuCard(context, 'ติดต่อแพทย์', Icons.forum_rounded, Colors.teal.shade600, ContactDoctorPage(userToken: widget.userToken)),
                     ],
                   ),
                   const SizedBox(height: 28),
 
-                  // 🏆 5. รายการประวัติการฝึกฝนล่าสุด
-                  const Text('บันทึกการฝึกซ้อมล่าสุด', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-                  const SizedBox(height: 14),
-                  ListView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: mockHistory.length,
-                    itemBuilder: (context, index) {
-                      final item = mockHistory[index];
-                      return Container(
-                        margin: const EdgeInsets.symmetric(vertical: 6),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))
-                          ]
-                        ),
-                        child: ListTile(
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                          leading: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: const BoxDecoration(color: AppTheme.backgroundColor, shape: BoxShape.circle),
-                            child: const Icon(Icons.accessibility_new_rounded, color: AppTheme.primaryColor, size: 22),
-                          ),
-                          title: Text('วันที่ฝึก: ${item['date']}', style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary, fontSize: 14)),
-                          subtitle: Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text('เวลาที่ใช้: ${item['time']}', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                          ),
-                          trailing: Text(
-                            '${item['score']}',
-                            style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryColor, fontSize: 18),
-                          ),
-                        ),
-                      );
-                    },
+                  // 🏆 5. รายการประวัติ
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('บันทึกการฝึกซ้อมล่าสุด', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      IconButton(
+                        icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
+                        onPressed: _fetchDashboardData,
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 10),
+
+                  _isLoading
+                      ? const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+                      : _historyList.isEmpty
+                          ? Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(24),
+                              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                              child: const Center(
+                                child: Text('ยังไม่มีประวัติการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _historyList.length > 5 ? 5 : _historyList.length,
+                              itemBuilder: (context, index) {
+                                final item = _historyList[index];
+                                final count = item['count'] ?? 0;
+                                final accuracy = item['accuracy'] ?? 0;
+                                final duration = item['duration'] ?? 0;
+
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10, offset: const Offset(0, 4))
+                                    ]
+                                  ),
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                    leading: Container(
+                                      padding: const EdgeInsets.all(10),
+                                      decoration: const BoxDecoration(color: AppTheme.backgroundColor, shape: BoxShape.circle),
+                                      child: const Icon(Icons.accessibility_new_rounded, color: AppTheme.primaryColor, size: 22),
+                                    ),
+                                    title: Text('จำนวนรอบ: $count ครั้ง', style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.textPrimary, fontSize: 14)),
+                                    subtitle: Padding(
+                                      padding: const EdgeInsets.only(top: 4),
+                                      child: Text('ระยะเวลา: $duration วินาที', style: const TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                                    ),
+                                    trailing: Text(
+                                      '$accuracy%',
+                                      style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryColor, fontSize: 18),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                 ],
               ),
             ),
@@ -267,13 +360,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ),
       const HistoryPage(),
-      const SettingsPage(),
+      SettingsPage(userToken: widget.userToken),
     ];
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       body: pages[_currentIndex],
-      
       bottomNavigationBar: Container(
         height: 72,
         decoration: BoxDecoration(
@@ -336,7 +428,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     return Expanded(
       child: InkWell(
-        onTap: () => setState(() => _currentIndex = index),
+        onTap: () {
+          setState(() => _currentIndex = index);
+          // ⚡ ถ้ากดเลือกแท็บ 0 (หน้าหลัก) ให้สั่งดึงข้อมูลอุปกรณ์และโปรไฟล์ใหม่ทันที[cite: 9]
+          if (index == 0) {
+            _fetchDashboardData();
+          }
+        },
         splashColor: activeColor.withOpacity(0.05),
         highlightColor: Colors.transparent,
         child: Column(
@@ -363,7 +461,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  void _showDeviceBottomSheet(BuildContext context, String? serial) {
+  // 📱 BottomSheet แสดงข้อมูลอุปกรณ์จริงจาก DB
+  void _showDeviceBottomSheet(BuildContext context, String? name, String? serial) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
@@ -382,11 +481,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ],
             ),
             const Divider(height: 32),
-            Text('ชื่ออุปกรณ์: ถุงมือกลกายภาพบำบัดอัจฉริยะ', style: TextStyle(fontSize: 14, color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
+            Text('ชื่ออุปกรณ์: ${name ?? "ถุงมือกลอัจฉริยะ"}', style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary, fontWeight: FontWeight.w600)),
             const SizedBox(height: 10),
-            Text('Serial Number: $serial', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            Text('Serial Number: ${serial ?? "ไม่มีข้อมูล"}', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
             const SizedBox(height: 10),
-            const Text('สถานะองศามือปัจจุบัน: สแตนด์บาย (0°)', style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.w700)),
+            const Text('สถานะการใช้งาน: พร้อมใช้งาน (0°)', style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.w700)),
             const SizedBox(height: 16),
           ],
         ),

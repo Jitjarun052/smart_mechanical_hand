@@ -45,7 +45,7 @@ class _SignInScreenState extends State<SignInScreen> {
       if (role == 'doctor') {
         _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
       } else if (role == 'patient') {
-        _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล');
+        _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล', result['token']);
       } else {
         _showErrorDialog('ไม่พบสิทธิ์การใช้งานที่ถูกต้อง');
       }
@@ -77,35 +77,39 @@ class _SignInScreenState extends State<SignInScreen> {
     );
   }
 
-  void _showLoginSuccess(String message) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('เข้าสู่ระบบสำเร็จ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Text(message, style: const TextStyle(fontSize: 14)),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(builder: (context) => const DashboardScreen()),
-              );
-            },
-            child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
-          ),
+  // ใน signin_screen.dart ฟังก์ชัน _showLoginSuccess
+void _showLoginSuccess(String message, String token) { // 👈 รับ token เข้ามา
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Row(
+        children: [
+          Icon(Icons.check_circle, color: Colors.green),
+          SizedBox(width: 8),
+          Text('เข้าสู่ระบบสำเร็จ', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
         ],
       ),
-    );
-  }
+      content: Text(message, style: const TextStyle(fontSize: 14)),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Navigator.pop(context);
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                // ✨ ส่ง userToken ไปยัง DashboardScreen
+                builder: (context) => DashboardScreen(userToken: token), 
+              ),
+            );
+          },
+          child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),
+        ),
+      ],
+    ),
+  );
+}
 
   void _showLoginSuccessDoctor(String message) {
     showDialog(

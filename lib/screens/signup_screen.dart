@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../api/auth_service.dart';
+import '../api/doctor_service.dart';
 import '../widgets/signup/step1_personal_form.dart';
 import '../widgets/signup/step2_medical_form.dart';
 import '../widgets/signup/step3_device_form.dart';
@@ -56,7 +57,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   // 🔌 ฟังก์ชันดึงหมอจาก Backend
   Future<void> _fetchDoctorsFromApi() async {
-    final doctors = await AuthService.getDoctors();
+    final doctors = await DoctorService.getDoctors();
     if (mounted) {
       setState(() {
         _doctorsList = doctors;
@@ -253,7 +254,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     serialNumberController: _serialNumberController,
                     deviceNameController: _deviceNameController,
                     isSubmitting: _isSubmitting,
-                    onSubmit: () => _handleFinalSignUp(isSkipDevice: false),
+                    onSubmitWithDevice: (deviceData){ _handleFinalSignUp(isSkipDevice: false);},
                     onSkip: () => _handleFinalSignUp(isSkipDevice: true),
                     onPrev: _prevStep,
                   ),

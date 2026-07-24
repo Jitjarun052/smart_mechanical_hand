@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../api/auth_service.dart';
+import '../api/password_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/forgot_password/verify_identity_step.dart';
 import '../widgets/forgot_password/reset_password_step.dart';
@@ -33,7 +33,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     setState(() => _isLoading = true);
 
-    final result = await AuthService.verifyIdentity(
+    final result = await PasswordService.verifyIdentity(
       email: _emailController.text.trim(),
       phone: _phoneController.text.trim(),
     );
@@ -68,7 +68,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     setState(() => _isLoading = true);
 
-    final result = await AuthService.resetPassword(
+    final result = await PasswordService.resetPassword(
       userId: _verifiedUserId!,
       newPassword: _newPasswordController.text.trim(),
     );

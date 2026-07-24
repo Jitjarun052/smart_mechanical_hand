@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 import '../../screens/scan_screen.dart';
+import '../../api/device_service.dart'; // 👈 นำเข้า DeviceService
 
 class Step3DeviceForm extends StatelessWidget {
   final GlobalKey<FormState> formKey;
   final TextEditingController serialNumberController;
   final TextEditingController deviceNameController;
   final bool isSubmitting;
-  final VoidCallback onSubmit;
+  final Function(Map<String, dynamic> deviceData) onSubmitWithDevice; // 👈 ส่งข้อมูลอุปกรณ์ที่ผูกสำเร็จกลับไป
   final VoidCallback onSkip;
   final VoidCallback onPrev;
 
@@ -17,10 +18,89 @@ class Step3DeviceForm extends StatelessWidget {
     required this.serialNumberController,
     required this.deviceNameController,
     required this.isSubmitting,
-    required this.onSubmit,
+    required this.onSubmitWithDevice,
     required this.onSkip,
     required this.onPrev,
   });
+
+  // 📱 ฟังก์ชันแสดง Modal แจ้งเตือนข้อผิดพลาด/คำแนะนำ
+  void _showErrorModal(BuildContext context, String title, String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: Colors.red, size: 28),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ลองใหม่อีกครั้ง', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 🚀 ฟังก์ชันตรวจสอบ Serial Number ก่อนส่งผ่าน Step
+  Future<void> _handleDeviceValidation(BuildContext context) async {
+    if (!formKey.currentState!.validate()) return;
+
+    final serial = serialNumberController.text.trim();
+    final name = deviceNameController.text.trim();
+
+    // Show loading
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor)),
+    );
+
+    // 📡 ยิง API ไปเช็ก Serial Number ในตาราง device ว่ามีจริงไหม และว่างอยู่หรือไม่
+    // (หมายเหตุ: ใช้ temp userId = 0 เพื่อตรวจสอบการถือครองก่อน)
+    final checkResult = await DeviceService.bindDevice(
+      serialNumber: serial,
+      userId: 0, // หรือสร้าง API เช็กแยกเฉพาะ /device/check-serial
+      deviceName: name,
+    );
+
+    if (context.mounted) Navigator.pop(context); // ปิด Loading Indicator
+
+    // ❌ กรณีไม่พบอุปกรณ์ หรือ ถูกผู้อื่นใช้งานไปแล้ว
+    if (checkResult['success'] == false) {
+      if (context.mounted) {
+        _showErrorModal(
+          context,
+          'ไม่สามารถผูกอุปกรณ์ได้',
+          checkResult['message'] ?? 'ไม่พบ Serial Number นี้ในระบบ หรือ ถูกลงทะเบียนไปแล้ว',
+        );
+      }
+    } else {
+      // ✅ ผ่าน! อุปกรณ์มีจริงและพร้อมใช้งาน -> ส่งข้อมูลไปยัง callback เพื่อสมัครสมาชิกต่อ
+      onSubmitWithDevice({
+        'serial_number': serial,
+        'device_name': name,
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +134,7 @@ class Step3DeviceForm extends StatelessWidget {
                   },
                 ),
               ),
-              validator: (v) => v == null || v.isEmpty ? 'กรุณาระบุ Serial Number' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? 'กรุณาระบุ Serial Number' : null,
             ),
             const SizedBox(height: 20),
 
@@ -63,7 +143,7 @@ class Step3DeviceForm extends StatelessWidget {
               controller: deviceNameController,
               style: const TextStyle(fontSize: 14),
               decoration: _buildDecoration('เช่น ถุงมือฟื้นฟูของสมชาย', Icons.drive_file_rename_outline_rounded),
-              validator: (v) => v == null || v.isEmpty ? 'กรุณาตั้งชื่อเล่นให้อุปกรณ์' : null,
+              validator: (v) => v == null || v.trim().isEmpty ? 'กรุณาตั้งชื่อเล่นให้อุปกรณ์' : null,
             ),
             const SizedBox(height: 40),
 
@@ -89,21 +169,21 @@ class Step3DeviceForm extends StatelessWidget {
                       style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
                       onPressed: isSubmitting
                           ? null
-                          : () {
-                              if (formKey.currentState!.validate()) {
-                                onSubmit();
-                              }
-                            },
-                      child: const Text('ยืนยันลงทะเบียน', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
+                          : () => _handleDeviceValidation(context), // 👈 เรียกฟังก์ชันตรวจเช็ก Serial Number ก่อนส่งผ่าน
+                      child: isSubmitting
+                          ? const CircularProgressIndicator(color: Colors.white)
+                          : const Text('ยืนยันลงทะเบียน', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
                     ),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 24),
+            
+            // ⏩ ปุ่มข้ามขั้นตอน
             Center(
               child: TextButton(
-                onPressed: isSubmitting ? null : onSkip,
+                onPressed: isSubmitting ? null : onSkip, // 👈 กดข้ามได้ทันทีโดยไม่เช็กช่องอินพุต
                 child: const Text('ข้ามขั้นตอนผูกอุปกรณ์ไปก่อน', style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold, decoration: TextDecoration.underline)),
               ),
             ),

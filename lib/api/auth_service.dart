@@ -1,22 +1,17 @@
 import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'api_config.dart';
 
 class AuthService {
-  // 🌐 เปลี่ยน URL ตามสภาพแวดล้อมที่รัน
-  // - Flutter Web / Chrome: 'http://localhost:5000/api'
-  // - Android Emulator: 'http://10.0.2.2:5000/api'
-  // - เครื่องจริง Realme GT 6: 'http://<IP_เครื่องคอมในวง_LAN>:5000/api'
-  static const String baseUrl = 'http://localhost:5000/api';
-
   /// 🔌 ยิง Smart Login (เช็กได้ทั้ง Doctor และ Patient)
   static Future<Map<String, dynamic>> login(String email, String password) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/user/login'),
-        headers: {'Content-Type': 'application/json'},
+        Uri.parse('${ApiConfig.baseUrl}/user/login'),
+        headers: ApiConfig.headers,
         body: jsonEncode({
           'email': email,
           'password': password,
@@ -47,6 +42,7 @@ class AuthService {
     }
   }
 
+  /// 📝 สมัครสมาชิกผู้ป่วย
   static Future<Map<String, dynamic>> registerPatient({
     required String firstname,
     required String lastname,
@@ -60,15 +56,14 @@ class AuthService {
     String? doctorId,
     String? serialNumber,
     String? deviceName,
-    File? imageFile,          // สำหรับ Mobile (Android / iOS)
-    Uint8List? imageBytes,    // สำหรับ Web
-    String? imageName,        // ชื่อไฟล์รูป
+    File? imageFile,
+    Uint8List? imageBytes,
+    String? imageName,
   }) async {
     try {
-      final uri = Uri.parse('$baseUrl/user/register');
+      final uri = Uri.parse('${ApiConfig.baseUrl}/user/register');
       var request = http.MultipartRequest('POST', uri);
 
-      // 📝 ผูกข้อมูล Text Form
       request.fields['firstname'] = firstname;
       request.fields['lastname'] = lastname;
       request.fields['email'] = email;
@@ -87,9 +82,7 @@ class AuthService {
         request.fields['device_name'] = deviceName;
       }
 
-      // 📸 [แนบรูปภาพ]: สลับตามแพลตฟอร์มอัตโนมัติ
       if (kIsWeb && imageBytes != null) {
-        // ฝั่ง Web ยิงด้วย Bytes
         request.files.add(
           http.MultipartFile.fromBytes(
             'image', 
@@ -99,7 +92,6 @@ class AuthService {
           ),
         );
       } else if (!kIsWeb && imageFile != null) {
-        // ฝั่ง Mobile (Android/iOS) ยิงด้วย File Path
         request.files.add(
           await http.MultipartFile.fromPath('image', imageFile.path),
         );
@@ -119,83 +111,27 @@ class AuthService {
     }
   }
 
-  static Future<List<Map<String, String>>> getDoctors() async {
+  // เพิ่มลงใน AuthService หรือ UserService
+  static Future<Map<String, dynamic>> getMe(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('$baseUrl/doctor'), // URL ยิงไปหา Endpoint ดึงรายชื่อหมอ
-        headers: {'Content-Type': 'application/json'},
+        Uri.parse('${ApiConfig.baseUrl}/user/me'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token', // 🔑 แนบ Token ส่งไปให้ getMe ใน Node.js
+        },
       );
 
-      if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
-        
-        // แปลงข้อมูลจาก Backend ให้ตรงกับโครงสร้างที่ Autocomplete ต้องใช้
-        return data.map((doc) {
-          final code = doc['doctor_code']?.toString() ?? doc['id']?.toString() ?? '';
-          final name = doc['name'] ?? '${doc['firstname']} ${doc['lastname']}';
-          final specialty = doc['specialty'] != null ? ' (${doc['specialty']})' : '';
-          
-          return {
-            'id': code, // doctor_code ที่จะส่งกลับไปบันทึกตอนสมัคร
-            'name': '$name$specialty', // ชื่อหมอ + ความเชี่ยวชาญสำหรับโชว์ในรายการ
-          };
-        }).toList();
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
+        return {'success': true, 'user': data['user']};
+      } else {
+        return {'success': false, 'message': data['error'] ?? 'ดึงข้อมูลผู้ใช้ล้มเหลว'};
       }
-      return [];
     } catch (e) {
-      print('Error fetching doctors: $e');
-      return [];
+      return {'success': false, 'message': 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้: $e'};
     }
   }
-
-  // 1. ตรวจสอบข้อมูลผู้ใช้
-static Future<Map<String, dynamic>> verifyIdentity({
-  required String email,
-  required String phone,
-}) async {
-  try {
-    final response = await http.post(
-      Uri.parse('$baseUrl/user/verify-identity'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'phone': phone}),
-    );
-
-    final data = jsonDecode(response.body);
-    if (response.statusCode == 200) {
-      return {
-        'success': true, 
-        'userId': data['userId'], 
-        'firstname': data['firstname']
-      };
-    } else {
-      return {'success': false, 'message': data['error'] ?? 'ไม่พบข้อมูลในระบบ'};
-    }
-  } catch (e) {
-    return {'success': false, 'message': 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: $e'};
-  }
-}
-
-// 2. ตั้งรหัสผ่านใหม่
-static Future<Map<String, dynamic>> resetPassword({
-  required int userId,
-  required String newPassword,
-}) async {
-  try {
-    final response = await http.post(
-      Uri.parse('$baseUrl/user/reset-password'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'userId': userId, 'newPassword': newPassword}),
-    );
-
-    final data = jsonDecode(response.body);
-    if (response.statusCode == 200) {
-      return {'success': true, 'message': data['message'] ?? 'รีเซ็ตสำเร็จ'};
-    } else {
-      return {'success': false, 'message': data['error'] ?? 'เกิดข้อผิดพลาด'};
-    }
-  } catch (e) {
-    return {'success': false, 'message': 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้: $e'};
-  }
-}
 
 }
