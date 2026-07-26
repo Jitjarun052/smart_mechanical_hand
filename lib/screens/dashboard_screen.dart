@@ -35,6 +35,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   String? _userImage;
   
   // ⚡ ตัวแปรเก็บข้อมูลอุปกรณ์จาก DB
+  int? _deviceId;
   String? _deviceSerialNumber;
   String? _deviceName;
   int? _deviceStatus; // 0 = ปกติ, 1 = ถูกระงับ
@@ -77,6 +78,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final deviceData = await DeviceService.getDeviceByUserId(userId);
           if (deviceData != null && mounted) {
             setState(() {
+              _deviceId = deviceData['device_id'];
               _deviceSerialNumber = deviceData['serial_number'];
               _deviceName = deviceData['device_name'];
               _deviceStatus = deviceData['device_status'];
@@ -251,7 +253,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ]
                     ),
                     child: InkWell(
-                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const TrainingPage())),
+                      onTap: () {
+                        // 1. เช็กว่าผู้ป่วยล็อกอินเรียบร้อยหรือยัง
+                        if (_currentUserId == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('กำลังโหลดข้อมูลผู้ป่วย กรุณาลองใหม่อีกครั้ง')),
+                          );
+                          return;
+                        }
+
+                        // 2. เช็กว่ามีการผูกอุปกรณ์ใน Database หรือยัง
+                        if (_deviceId == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('กรุณาลงทะเบียนผูกอุปกรณ์ Smart Glove ก่อนเริ่มฝึกซ้อม')),
+                          );
+                          return;
+                        }
+
+                        // 3. ส่ง userId และ deviceId จริงข้ามไปหน้า TrainingPage สดๆ
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => TrainingPage(
+                              userId: _currentUserId!,
+                              deviceId: _deviceId!,
+                            ),
+                          ),
+                        ).then((_) => _fetchDashboardData()); // พอฝึกเสร็จกลับมา ให้รีเฟรชสถิติใหม่ทันที
+                      },
                       borderRadius: BorderRadius.circular(24),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),

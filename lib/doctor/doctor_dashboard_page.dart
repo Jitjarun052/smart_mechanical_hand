@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../api/auth_service.dart';
+import '../api/api_config.dart';
 import '../theme/app_theme.dart';
 import 'patient_detail_page.dart';
-import 'edit_profile_page.dart'; 
+import 'edit_profile_page.dart';
 import '../screens/sign_in_screen.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class DoctorDashboardPage extends StatefulWidget {
-  const DoctorDashboardPage({super.key});
+  final String? doctorToken; // 🔑 รับ Token ของแพทย์เมื่อเข้าสู่ระบบ
+
+  const DoctorDashboardPage({super.key, this.doctorToken});
 
   @override
   State<DoctorDashboardPage> createState() => _DoctorDashboardPageState();
@@ -13,16 +20,21 @@ class DoctorDashboardPage extends StatefulWidget {
 
 class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
-  
+  bool _isLoading = true;
+
+  // 👨‍⚕️ ข้อมูลแพทย์ประจำตัว
+  String _doctorName = 'นพ. ผู้ดูแลระบบ';
+  String _doctorSpecialty = 'แพทย์ผู้เชี่ยวชาญด้านเวชศาสตร์ฟื้นฟู';
+  String _hospitalName = 'โรงพยาบาลศูนย์กายภาพบำบัด';
+  String? _doctorImage;
+
+  // 🏥 รายชื่อผู้ป่วย & ประวัติฝึก
+  List<Map<String, dynamic>> _myPatients = [];
+  List<Map<String, dynamic>> _allHistoryLogs = [];
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
   late AnimationController _refreshAnimationController;
-
-  final List<Map<String, dynamic>> _myPatients = [
-    {'id': 'P001', 'name': 'จิตร์จรัญ คืนมาเมือง', 'age': '65', 'symptom': 'หลอดเลือดสมอง (Stroke) / อ่อนแรงซีกซ้าย', 'last_session': '17 มิ.ย. 2569', 'progress': '85%'},
-    {'id': 'P002', 'name': 'สมชาย ใจดี', 'age': '58', 'symptom': 'กล้ามเนื้อเหยียดนิ้วมือหดเกร็ง', 'last_session': '15 มิ.ย. 2569', 'progress': '90%'},
-    {'id': 'P003', 'name': 'สมศรี รักสงบ', 'age': '70', 'symptom': 'อุบัติเหตุเส้นประสาทส่วนปลายบาดเจ็บ', 'last_session': 'ยังไม่มีการฝึก', 'progress': '0%'},
-  ];
 
   @override
   void initState() {
@@ -31,6 +43,7 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
       vsync: this,
       duration: const Duration(milliseconds: 800),
     );
+    _fetchDoctorDataAll();
   }
 
   @override
@@ -40,18 +53,118 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     super.dispose();
   }
 
+  // 📡 ดึงข้อมูลโปรไฟล์หมอ + ผู้ป่วยในการดูแล + ประวัติการฝึกรวม
+  Future<void> _fetchDoctorDataAll() async {
+    if (widget.doctorToken == null || widget.doctorToken!.isEmpty) {
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // 1. ดึงโปรไฟล์หมอผ่าน /api/user/me
+      final meResult = await AuthService.getMe(widget.doctorToken!);
+      if (meResult['success'] == true && meResult['role'] == 'doctor') {
+        final doc = meResult['user'];
+        _doctorName = doc['name'] ?? 'นพ. ผู้ดูแล';
+        _doctorSpecialty = doc['specialty'] ?? 'แพทย์ผู้เชี่ยวชาญด้านเวชศาสตร์ฟื้นฟู';
+        _hospitalName = doc['hospital_name'] ?? 'ศูนย์กายภาพบำบัด';
+        _doctorImage = ApiConfig.getImageUrl(doc['image']);
+      }
+
+      // 2. ดึงผู้ป่วยในการดูแลเฉพาะของหมอคนนี้
+      final patientsRes = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/doctor/my-patients'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.doctorToken}',
+        },
+      );
+
+      if (patientsRes.statusCode == 200) {
+        final pData = jsonDecode(patientsRes.body);
+        if (pData['status'] == 'success') {
+          _myPatients = List<Map<String, dynamic>>.from(pData['patients'].map((item) {
+            String lastSession = 'ยังไม่มีการฝึก';
+            if (item['last_session_raw'] != null) {
+              try {
+                final dt = DateTime.parse(item['last_session_raw']).toLocal();
+                lastSession = DateFormat('d มิ.ย. yyyy', 'th').format(dt);
+              } catch (_) {}
+            }
+            return {
+              'id': item['id'].toString(),
+              'name': item['name'] ?? 'ไม่ระบุชื่อ',
+              'age': item['age']?.toString() ?? '-',
+              'symptom': item['symptom'] ?? 'ไม่ระบุอาการ',
+              'last_session': lastSession,
+              'progress': '${item['avg_accuracy'] ?? 0}%',
+            };
+          }));
+        }
+      }
+
+      // 3. ดึง Log การฝึกรวมของผู้ป่วยในการดูแล
+      final logsRes = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/doctor/history-logs'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ${widget.doctorToken}',
+        },
+      );
+
+      if (logsRes.statusCode == 200) {
+        final lData = jsonDecode(logsRes.body);
+        if (lData['status'] == 'success') {
+          _allHistoryLogs = List<Map<String, dynamic>>.from(lData['logs'].map((item) {
+            String dateStr = '';
+            String timeStr = '';
+            if (item['created_at'] != null) {
+              try {
+                final dt = DateTime.parse(item['created_at']).toLocal();
+                dateStr = DateFormat('d มิ.ย. yyyy', 'th').format(dt);
+                timeStr = DateFormat('HH:mm น.').format(dt);
+              } catch (_) {}
+            }
+            int acc = item['accuracy'] ?? 0;
+            return {
+              'patient_name': item['patient_name'] ?? 'ไม่ระบุผู้ป่วย',
+              'date': dateStr,
+              'time': timeStr,
+              'finger': 'นิ้วกล',
+              'max_angle': '${acc}%',
+              'duration': '${((item['duration'] ?? 0) / 60).round()} นาที',
+              'performance': acc >= 80 ? 'ดีเยี่ยม 📈' : 'ต้องกระตุ้น ⚠️',
+              'status_color': acc >= 80 ? Colors.green : Colors.orange,
+            };
+          }));
+        }
+      }
+
+    } catch (e) {
+      print('Doctor Dashboard Fetch Error: $e');
+    }
+
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final List<Widget> _doctorScreens = [
-      _buildMainDashboardTab(), 
-      _buildHistoryTab(),       
-      _buildProfileSettingTab(), 
+    final List<Widget> doctorScreens = [
+      _buildMainDashboardTab(),
+      _buildHistoryTab(),
+      _buildProfileSettingTab(),
     ];
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       body: SafeArea(
-        child: _doctorScreens[_currentIndex],
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
+            : doctorScreens[_currentIndex],
       ),
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
@@ -103,8 +216,10 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
   // ==================== 🏠 แท็บที่ 1: หน้า Dashboard ค้นหาผู้ป่วย ====================
   Widget _buildMainDashboardTab() {
     final filteredPatients = _myPatients.where((patient) {
-      return patient['name']!.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-             patient['symptom']!.toLowerCase().contains(_searchQuery.toLowerCase());
+      final name = patient['name'].toString().toLowerCase();
+      final symptom = patient['symptom'].toString().toLowerCase();
+      final q = _searchQuery.toLowerCase();
+      return name.contains(q) || symptom.contains(q);
     }).toList();
 
     return SingleChildScrollView(
@@ -112,19 +227,19 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'สวัสดีครับ, นพ.สมชาย 👋',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+          Text(
+            'สวัสดีครับ, $_doctorName 👋',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
           ),
           const SizedBox(height: 4),
-          const Text('ระบบติดตามสถิติผู้ป่วย Smart Mechanical Hand', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+          Text(_hospitalName, style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
           const SizedBox(height: 24),
-          
+
           Row(
             children: [
-              _buildStatCard('ผู้ป่วยทั้งหมด', '${_myPatients.length} คน', Icons.people_alt_rounded, Colors.blue),
+              _buildStatCard('ผู้ป่วยในการดูแล', '${_myPatients.length} คน', Icons.people_alt_rounded, Colors.blue),
               const SizedBox(width: 16),
-              _buildStatCard('ต้องดูแลด่วน', '1 คน', Icons.warning_amber_rounded, Colors.orange),
+              _buildStatCard('ต้องดูแลด่วน', '${_myPatients.where((p) => p['progress'] == '0%').length} คน', Icons.warning_amber_rounded, Colors.orange),
             ],
           ),
           const SizedBox(height: 28),
@@ -158,14 +273,14 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                   icon: RotationTransition(turns: _refreshAnimationController, child: const Icon(Icons.refresh_rounded, color: AppTheme.primaryColor, size: 24)),
                   onPressed: () {
                     _refreshAnimationController.forward(from: 0.0);
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('🔄 รีเฟรชข้อมูลผู้ป่วยล่าสุดเรียบร้อย...')));
+                    _fetchDoctorDataAll();
                   },
                 ),
               ),
             ],
           ),
           const SizedBox(height: 28),
-          
+
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -175,52 +290,59 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           ),
           const SizedBox(height: 12),
 
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: filteredPatients.length,
-            itemBuilder: (context, index) {
-              final patient = filteredPatients[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(vertical: 8.0),
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.grey.withOpacity(0.15))),
-                child: InkWell(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => PatientDetailPage(patientData: patient),
-                      ),
-                    );
-                  },
-                  borderRadius: BorderRadius.circular(16),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      children: [
-                        CircleAvatar(radius: 22, backgroundColor: AppTheme.primaryColor.withOpacity(0.1), child: const Icon(Icons.person_search_rounded, color: AppTheme.primaryColor, size: 20)),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+          filteredPatients.isEmpty
+              ? Container(
+                  padding: const EdgeInsets.all(24),
+                  width: double.infinity,
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                  child: const Center(child: Text('ไม่พบข้อมูลผู้ป่วยในการดูแล', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: filteredPatients.length,
+                  itemBuilder: (context, index) {
+                    final patient = filteredPatients[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8.0),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.grey.withOpacity(0.15))),
+                      child: InkWell(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => PatientDetailPage(patientData: patient),
+                            ),
+                          );
+                        },
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.all(16.0),
+                          child: Row(
                             children: [
-                              Text('${patient['name']} (${patient['age']} ปี)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary)),
-                              const SizedBox(height: 4),
-                              Text('อาการ: ${patient['symptom']}', style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
-                              const SizedBox(height: 6),
-                              Text('ฝึกซ้อมล่าสุด: ${patient['last_session']} | พัฒนาการ: ${patient['progress']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                              CircleAvatar(radius: 22, backgroundColor: AppTheme.primaryColor.withOpacity(0.1), child: const Icon(Icons.person_search_rounded, color: AppTheme.primaryColor, size: 20)),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text('${patient['name']} (${patient['age']} ปี)', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary)),
+                                    const SizedBox(height: 4),
+                                    Text('อาการ: ${patient['symptom']}', style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    const SizedBox(height: 6),
+                                    Text('ฝึกซ้อมล่าสุด: ${patient['last_session']} | พัฒนาการ: ${patient['progress']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                                  ],
+                                ),
+                              ),
+                              const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
                             ],
                           ),
                         ),
-                        const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ],
       ),
     );
@@ -228,169 +350,80 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
 
   // ==================== 📊 แท็บที่ 2: หน้าประวัติฝึกภาพรวม ====================
   Widget _buildHistoryTab() {
-    final List<Map<String, dynamic>> _allHistoryLogs = [
-      {
-        'patient_name': 'จิตร์จรัญ คืนมาเมือง',
-        'date': '26 มิ.ย. 2569',
-        'time': '11:15 น.',
-        'finger': 'นิ้วชี้',
-        'max_angle': '145°',
-        'duration': '15 นาที',
-        'performance': 'ดีเยี่ยม 📈',
-        'status_color': Colors.green
-      },
-      {
-        'patient_name': 'สมชาย ใจดี',
-        'date': '25 มิ.ย. 2569',
-        'time': '16:40 น.',
-        'finger': 'นิ้วโป้ง',
-        'max_angle': '95°',
-        'duration': '15 นาที',
-        'performance': 'ตามเป้าหมาย',
-        'status_color': Colors.blue
-      },
-      {
-        'patient_name': 'จิตร์จรัญ คืนมาเมือง',
-        'date': '24 มิ.ย. 2569',
-        'time': '09:30 น.',
-        'finger': 'นิ้วกลาง',
-        'max_angle': '110°',
-        'duration': '10 นาที',
-        'performance': 'ปกติ',
-        'status_color': Colors.blue
-      },
-      {
-        'patient_name': 'สมชาย ใจดี',
-        'date': '23 มิ.ย. 2569',
-        'time': '14:20 น.',
-        'finger': 'นิ้วชี้',
-        'max_angle': '85°',
-        'duration': '15 นาที',
-        'performance': 'ต้องกระตุ้น ⚠️',
-        'status_color': Colors.orange
-      },
-    ];
-
     return SingleChildScrollView(
       padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 32.0, bottom: 24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'ประวัติการฝึกซ้อมรวม 📊',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-          ),
+          const Text('ประวัติการฝึกซ้อมรวม 📊', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
           const SizedBox(height: 4),
-          const Text(
-            'บันทึกเซสชันกายภาพบำบัดล่าสุดของผู้ป่วยทุกคนในการดูแล',
-            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-          ),
+          const Text('บันทึกเซสชันกายภาพบำบัดล่าสุดของผู้ป่วยทุกคนในการดูแล', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
           const SizedBox(height: 24),
 
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _allHistoryLogs.length,
-            itemBuilder: (context, index) {
-              final log = _allHistoryLogs[index];
-              return Card(
-                margin: const EdgeInsets.symmetric(vertical: 8),
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: Colors.grey.withOpacity(0.12)),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: InkWell(
-                  onTap: () {
-                    final patientTarget = {
-                      'id': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' ? 'P001' : 'P002',
-                      'name': log['patient_name'],
-                      'age': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' ? '65' : '58',
-                      'symptom': log['patient_name'] == 'จิตร์จรัญ คืนมาเมือง' 
-                          ? 'หลอดเลือดสมอง (Stroke) / อ่อนแรงซีกซ้าย'
-                          : 'กล้ามเนื้อเหยียดนิ้วมือหดเกร็ง',
-                    };
-
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => PatientDetailPage(patientData: patientTarget),
-                      ),
-                    );
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: (log['status_color'] as Color).withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(
-                            Icons.accessibility_new_rounded,
-                            color: log['status_color'] as Color,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: 16),
-                        
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                log['patient_name']!,
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary),
+          _allHistoryLogs.isEmpty
+              ? Container(
+                  padding: const EdgeInsets.all(24),
+                  width: double.infinity,
+                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                  child: const Center(child: Text('ยังไม่มีบันทึกการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))),
+                )
+              : ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _allHistoryLogs.length,
+                  itemBuilder: (context, index) {
+                    final log = _allHistoryLogs[index];
+                    return Card(
+                      margin: const EdgeInsets.symmetric(vertical: 8),
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.grey.withOpacity(0.12))),
+                      clipBehavior: Clip.antiAlias,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: (log['status_color'] as Color).withOpacity(0.1),
+                                shape: BoxShape.circle,
                               ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'ฝึกซ้อม: ${log['finger']} | ระยะเวลา: ${log['duration']}',
-                                style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
+                              child: Icon(Icons.accessibility_new_rounded, color: log['status_color'] as Color, size: 20),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Icon(Icons.calendar_month_rounded, size: 12, color: Colors.grey.shade400),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    '${log['date']} • ${log['time']}',
-                                    style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                                  Text(log['patient_name']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary)),
+                                  const SizedBox(height: 4),
+                                  Text('ระยะเวลาฝึก: ${log['duration']}', style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                                  const SizedBox(height: 4),
+                                  Row(
+                                    children: [
+                                      Icon(Icons.calendar_month_rounded, size: 12, color: Colors.grey.shade400),
+                                      const SizedBox(width: 4),
+                                      Text('${log['date']} • ${log['time']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+                                    ],
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
-                        ),
-                        
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              log['max_angle']!,
-                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryColor),
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              log['performance']!,
-                              style: TextStyle(
-                                fontSize: 11, 
-                                color: log['status_color'] as Color, 
-                                fontWeight: FontWeight.bold
-                              ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(log['max_angle']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primaryColor)),
+                                const SizedBox(height: 2),
+                                Text(log['performance']!, style: TextStyle(fontSize: 11, color: log['status_color'] as Color, fontWeight: FontWeight.bold)),
+                              ],
                             ),
                           ],
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            },
-          )
+                      ),
+                    );
+                  },
+                )
         ],
       ),
     );
@@ -412,30 +445,34 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
             decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.grey.withOpacity(0.15))),
             child: Column(
               children: [
-                Stack(
-                  children: [
-                    CircleAvatar(radius: 45, backgroundColor: AppTheme.primaryColor.withOpacity(0.1), child: const Icon(Icons.medical_information_rounded, size: 45, color: AppTheme.primaryColor)),
-                    Positioned(
-                      bottom: 0, right: 0,
-                      child: Container(
-                        padding: const EdgeInsets.all(6),
-                        decoration: const BoxDecoration(color: AppTheme.primaryColor, shape: BoxShape.circle),
-                        child: const Icon(Icons.camera_alt_rounded, size: 14, color: Colors.white),
-                      ),
-                    )
-                  ],
+                CircleAvatar(
+                  radius: 45,
+                  backgroundColor: AppTheme.primaryColor.withOpacity(0.1),
+                  backgroundImage: (_doctorImage != null && _doctorImage!.isNotEmpty) ? NetworkImage(_doctorImage!) : null,
+                  child: (_doctorImage == null || _doctorImage!.isEmpty)
+                      ? const Icon(Icons.medical_information_rounded, size: 45, color: AppTheme.primaryColor)
+                      : null,
                 ),
                 const SizedBox(height: 16),
-                const Text('นพ. สมชาย รักดี', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-                const Text('แพทย์ผู้เชี่ยวชาญด้านเวชศาสตร์ฟื้นฟู', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                Text(_doctorName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                Text(_doctorSpecialty, style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                Text(_hospitalName, style: const TextStyle(fontSize: 12, color: Colors.green, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 20),
                 
                 ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.push(
+                  onPressed: () async {
+                    // 🔑 แนบ doctorToken ไปด้วยเพื่อดึงข้อมูลเก่ามาโชว์ใน Input
+                    final isSaved = await Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const EditProfilePage()),
+                      MaterialPageRoute(
+                        builder: (context) => EditProfilePage(doctorToken: widget.doctorToken), 
+                      ),
                     );
+
+                    // พอกดบันทึกและย้อนกลับมา ให้ดึงข้อมูลหมอใหม่ทันที
+                    if (isSaved == true) {
+                      _fetchDoctorDataAll(); 
+                    }
                   },
                   icon: const Icon(Icons.edit_rounded, size: 16, color: Colors.white),
                   label: const Text('แก้ไขข้อมูลส่วนตัว', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.white)),
@@ -446,7 +483,7 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
           ),
           const SizedBox(height: 24),
 
-          // 🚪 [UPDATED]: ปุ่มกดออกจากระบบกลับไปหน้า Login พร้อม Dialog ยืนยัน
+          // 🚪 ปุ่ม Logout
           Card(
             elevation: 0,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Colors.red.shade100)),
@@ -456,67 +493,10 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
               title: Text('ออกจากระบบ (Logout)', style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold, fontSize: 14)),
               trailing: const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.red),
               onTap: () {
-                showDialog(
-                  context: context,
-                  builder: (BuildContext context) {
-                    return AlertDialog(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      title: const Row(
-                        children: [
-                          Icon(Icons.logout_rounded, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text(
-                            'ยืนยันการออกจากระบบ',
-                            style: TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      content: const Text(
-                        'คุณต้องการออกจากระบบบัญชีแพทย์/นักกายภาพบำบัดใช่หรือไม่?',
-                        style: TextStyle(fontSize: 14),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text(
-                            'ยกเลิก',
-                            style: TextStyle(color: Colors.grey),
-                          ),
-                        ),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.red,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            elevation: 0,
-                          ),
-                          onPressed: () {
-                            Navigator.pop(context);
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const SignInScreen(),
-                              ),
-                              (route) => false,
-                            );
-                          },
-                          child: const Text(
-                            'ออกจากระบบ',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SignInScreen()),
+                  (route) => false,
                 );
               },
             ),
@@ -549,9 +529,5 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
         ),
       ),
     );
-  }
-
-  void alertSnackBar(BuildContext context, String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 }

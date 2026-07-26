@@ -2,76 +2,204 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../api/history_service.dart';
+import '../api/device_service.dart';
 import './notification_page.dart';
 
 class TrainingPage extends StatefulWidget {
-  const TrainingPage({super.key});
+  final int userId;
+  final int deviceId;
+
+  const TrainingPage({
+    super.key, 
+    required this.userId,   // 👈 บังคับส่ง userId จริงมา
+    required this.deviceId, // 👈 บังคับส่ง deviceId จริงมา
+  });
 
   @override
   State<TrainingPage> createState() => _TrainingPageState();
 }
 
 class _TrainingPageState extends State<TrainingPage> {
-  // ⏱️ ตัวแปรระบบเวลาและข้อมูลเซนเซอร์
+  // ⏱️ ตัวแปรระบบเวลาและสถานะ
   bool _isTraining = false;
-  Timer? _timer;
+  Timer? _liveTimer;      // Timer สำหรับดึงข้อมูลสด (Live Stream)
+  Timer? _stopwatchTimer; // Timer สำหรับนับเวลาหน้าจอ
   int _secondsElapsed = 0;
-  
-  // 📊 ค่าสถานะจากเซนเซอร์
-  int _flexCount = 35; 
+
+  // 📊 ข้อมูลสถิติจริงจาก DB & IoT
+  int _flexCount = 0; 
   int _targetDays = 5; 
-  double _accuracy = 95.0; 
-  int _totalTrainingMin = 145; 
+  double _accuracy = 0.0; 
+  int _totalTrainingMin = 0; 
+  String _deviceStatus = 'สแตนด์บาย';
 
-  String _formatTime(int seconds) {
-    int mins = seconds ~/ 60;
-    int secs = seconds % 60;
-    String minsStr = mins.toString().padLeft(2, '0');
-    String secsStr = secs.toString().padLeft(2, '0');
-    return "$minsStr:$secsStr";
-  }
-
-  void _toggleTraining() {
-    setState(() {
-      _isTraining = !_isTraining;
-    });
-
-    if (_isTraining) {
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        setState(() {
-          _secondsElapsed++;
-        });
-      });
-    } else {
-      _timer?.cancel();
-      setState(() {
-        _secondsElapsed = 0;
-      });
-    }
-  }
-
-  void _simulateGloveAction() {
-    if (!_isTraining) return;
-    setState(() {
-      _flexCount++; 
-      if (_flexCount % 10 == 0) {
-        _totalTrainingMin++;
-      }
-      _accuracy = 85 + Random().nextDouble() * 14; 
-    });
+  @override
+  void initState() {
+    super.initState();
+    _fetchTodaySummary(); // ดึงประวัติของวันนี้มาโชว์ตอนเปิดหน้าจอครั้งแรก
+    _startLiveSync();     // เริ่มวงรอบดึงข้อมูล Live จาก IoT
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _liveTimer?.cancel();
+    _stopwatchTimer?.cancel();
     super.dispose();
+  }
+
+  // 📡 1. [แก้ไข ✨] ดึงประวัติภาพรวมวันนี้ผ่าน HistoryService
+  Future<void> _fetchTodaySummary() async {
+    try {
+      final historyList = await HistoryService.getHistoryByUserId(widget.userId.toString());
+      
+      if (historyList.isNotEmpty && mounted) {
+        int totalCount = 0;
+        int totalDurationSec = 0;
+        double sumAccuracy = 0.0;
+
+        for (var item in historyList) {
+          totalCount += (item['count'] as num? ?? 0).toInt();
+          totalDurationSec += (item['duration'] as num? ?? 0).toInt();
+          sumAccuracy += (item['accuracy'] as num? ?? 0).toDouble();
+        }
+
+        setState(() {
+          _flexCount = totalCount;
+          _totalTrainingMin = (totalDurationSec / 60).round();
+          _accuracy = historyList.isNotEmpty ? (sumAccuracy / historyList.length) : 0.0;
+        });
+      }
+    } catch (e) {
+      debugPrint('Fetch Summary Error: $e');
+    }
+  }
+
+  // 🔄 2. [แก้ไข ✨] ดึงข้อมูลสดจาก IoT ผ่าน DeviceService
+  void _startLiveSync() {
+    _liveTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      try {
+        final statusData = await DeviceService.getDeviceStatus(widget.deviceId);
+        if (statusData != null && mounted) {
+          bool isIoTActive = statusData['is_training'] ?? false;
+
+          // ซิงค์สเตทกับปุ่มที่ตัวถุงมือ Smart Glove อัตโนมัติ
+          if (isIoTActive != _isTraining) {
+            setState(() {
+              _isTraining = isIoTActive;
+              if (_isTraining) {
+                _startLocalTimer();
+              } else {
+                _stopLocalTimer();
+                _fetchTodaySummary();
+              }
+            });
+          }
+
+          if (_isTraining && statusData['live_count'] != null) {
+            setState(() {
+              _flexCount = statusData['live_count'];
+              _deviceStatus = 'กำลังทำงาน';
+            });
+          } else {
+            setState(() {
+              _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'สแตนด์บาย';
+            });
+          }
+        }
+      } catch (_) {}
+    });
+  }
+// ใช้ตอนมีอุปกรณื IoT จริง แต่ตอนนี้ยังไม่มีอุปกรณ์จริง เลยจำลองการนับรอบและความแม่นยำเอง
+  // 🚀 3. [แก้ไข ✨] สั่งงานเริ่ม/หยุดฝึกไปยัง ESP32 ผ่าน DeviceService
+  // Future<void> _toggleTraining() async {
+  //   bool nextState = !_isTraining;
+  //   String command = nextState ? 'START' : 'STOP';
+
+  //   bool success = await DeviceService.sendControlCommand(widget.deviceId, command);
+
+  //   if (success && mounted) {
+  //     setState(() {
+  //       _isTraining = nextState;
+  //       if (_isTraining) {
+  //         _startLocalTimer();
+  //       } else {
+  //         _stopLocalTimer();
+  //         _fetchTodaySummary();
+  //       }
+  //     });
+  //   } else if (mounted) {
+  //     ScaffoldMessenger.of(context).showSnackBar(
+  //       const SnackBar(content: Text('ไม่สามารถเชื่อมต่อกับอุปกรณ์ Smart Glove ได้')),
+  //     );
+  //   }
+  // }
+
+  
+  // void _startLocalTimer() {
+  //   _secondsElapsed = 0;
+  //   _stopwatchTimer?.cancel();
+  //   _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+  //     setState(() => _secondsElapsed++);
+  //   });
+  // }
+
+
+  //แบบจำลองข้อมูลการนับรอบและความแม่นยำจาก IoT (ESP32) โดยใช้ Timer
+
+  // 🚀 [แก้ไข ✨] สั่งงานเริ่ม/หยุดฝึกซ้อม
+  Future<void> _toggleTraining() async {
+    setState(() {
+      _isTraining = !_isTraining;
+      if (_isTraining) {
+        _startLocalTimer(); // เริ่มจับเวลา + เริ่มสุ่มนับรอบจำลองอัตโนมัติ
+      } else {
+        _stopLocalTimer();  // หยุดจับเวลา
+        _fetchTodaySummary(); // รีเฟรชสถิติสรุป
+      }
+    });
+
+    // 📡 พยายามยิงสั่งงาน ESP32 ขนานกันไป (ถ้ามีอุปกรณ์จริงเชื่อมต่ออยู่)
+    try {
+      String command = _isTraining ? 'START' : 'STOP';
+      await DeviceService.sendControlCommand(widget.deviceId, command);
+    } catch (e) {
+      // ซ่อน Error ไว้ช่วงพัฒนา จะได้ไม่ขึ้น SnackBar กวนใจตอนทดสอบจำลองครับ
+      debugPrint('IoT Command Offline Mode: $e');
+    }
+  }
+  void _startLocalTimer() {
+    _secondsElapsed = 0;
+    _stopwatchTimer?.cancel();
+    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() {
+        _secondsElapsed++;
+
+        // 💡 [เพิ่มลอจิกจำลอง]: ทุกๆ 6 วินาที = มือกำ/เหยียด 1 รอบ
+        if (_secondsElapsed % 6 == 0) {
+          _flexCount++; // เพิ่มจำนวนรอบอัตโนมัติ
+          _accuracy = 85.0 + (Random().nextDouble() * 12); // สุ่มความแม่นยำ 85-97%
+        }
+      });
+    });
+  }
+
+  void _stopLocalTimer() {
+    _stopwatchTimer?.cancel();
+    setState(() => _secondsElapsed = 0);
+  }
+
+  String _formatTime(int seconds) {
+    int mins = seconds ~/ 60;
+    int secs = seconds % 60;
+    return "${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}";
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
-      // 🛠️ 1. เพิ่มปุ่มกระดิ่งแจ้งเตือน (Notification) ไว้บน Topbar ตามต้นแบบ
       appBar: AppBar(
         title: const Text('ข้อมูลจากเซนเซอร์', style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold)),
         backgroundColor: AppTheme.backgroundColor,
@@ -86,13 +214,12 @@ class _TrainingPageState extends State<TrainingPage> {
                 IconButton(
                   icon: const Icon(Icons.notifications_rounded, color: Colors.blue, size: 28),
                   onPressed: () {
-                   Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const NotificationPage()),
-                  );
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const NotificationPage()),
+                    );
                   },
                 ),
-                // 🔴 ตัวเลขแจ้งเตือนสีแดง (Badge)
                 Positioned(
                   top: 8,
                   right: 8,
@@ -116,11 +243,10 @@ class _TrainingPageState extends State<TrainingPage> {
         padding: const EdgeInsets.all(24.0),
         child: Column(
           children: [
-            // 🤖 2. กล่องควบคุมและแผงเวลาดีไซน์รวมร่าง ( Action Card สไตล์ "พร้อมเริ่มปั่น" )
+            // 🤖 การ์ดควบคุมและจับเวลาฝึก
             Card(
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              // เปลี่ยนสีการ์ดให้เด่นขึ้นถ้ากําลังทํางาน
               color: _isTraining ? AppTheme.primaryColor.withOpacity(0.1) : Colors.white,
               child: Padding(
                 padding: const EdgeInsets.all(24.0),
@@ -136,7 +262,6 @@ class _TrainingPageState extends State<TrainingPage> {
                     ),
                     const SizedBox(height: 20),
                     
-                    // แถวพารามิเตอร์ย่อยในบาร์ (เวลา และ อุปกรณ์)
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
@@ -153,14 +278,13 @@ class _TrainingPageState extends State<TrainingPage> {
                             Icon(Icons.bluetooth_connected_rounded, color: _isTraining ? Colors.green : Colors.grey),
                             const SizedBox(height: 6),
                             const Text('Smart Hand', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                            Text(_isTraining ? 'ออนไลน์' : 'สแตนด์บาย', style: TextStyle(fontSize: 12, color: _isTraining ? Colors.green : AppTheme.textSecondary)),
+                            Text(_deviceStatus, style: TextStyle(fontSize: 12, color: _isTraining ? Colors.green : AppTheme.textSecondary)),
                           ],
                         ),
                       ],
                     ),
                     const SizedBox(height: 24),
                     
-                    // 🚀 ปุ่มกด Action "เริ่มฝึก / หยุดฝึก" ภายในตัวการ์ดตามสไตล์ที่คุณชอบ
                     SizedBox(
                       width: 160,
                       height: 46,
@@ -185,7 +309,7 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 16),
 
-            // 📊 3. แถวแสดงจำนวนครั้งสะสม และ ความคืบหน้าเป้าหมาย
+            // 📊 แสดงจำนวนครั้งสะสมวันนี้
             Row(
               children: [
                 Expanded(
@@ -253,7 +377,7 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 16),
 
-            // 📉 4. แถวแสดงความแม่นยำและระยะเวลาฝึกรวม
+            // 📉 สรุปความแม่นยำและเวลาสะสม
             Row(
               children: [
                 Expanded(
@@ -265,16 +389,6 @@ class _TrainingPageState extends State<TrainingPage> {
                 ),
               ],
             ),
-            
-            // 💡 ปุ่มยิงเซนเซอร์จำลอง
-            if (_isTraining) ...[
-              const SizedBox(height: 24),
-              TextButton.icon(
-                onPressed: _simulateGloveAction,
-                icon: const Icon(Icons.bolt, color: Colors.orange),
-                label: const Text('จำลองการกำ/เหยียดนิ้ว (เซนเซอร์ทำงาน)', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.bold)),
-              ),
-            ],
           ],
         ),
       ),

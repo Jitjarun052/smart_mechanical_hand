@@ -43,7 +43,7 @@ class _SignInScreenState extends State<SignInScreen> {
       final String role = result['role'];
 
       if (role == 'doctor') {
-        _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)');
+        _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)', result['token']);
       } else if (role == 'patient') {
         _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล', result['token']);
       } else {
@@ -111,7 +111,7 @@ void _showLoginSuccess(String message, String token) { // 👈 รับ token �
   );
 }
 
-  void _showLoginSuccessDoctor(String message) {
+  void _showLoginSuccessDoctor(String message, String token) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -131,7 +131,7 @@ void _showLoginSuccess(String message, String token) { // 👈 รับ token �
               Navigator.pop(context);
               Navigator.pushReplacement(
                 context,
-                MaterialPageRoute(builder: (context) => const DoctorDashboardPage()),
+                MaterialPageRoute(builder: (context) =>  DoctorDashboardPage(doctorToken: token)),
               );
             },
             child: const Text('ตกลง', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold)),

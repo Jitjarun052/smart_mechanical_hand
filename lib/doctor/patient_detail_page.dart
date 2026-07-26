@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart'; // 📊 อย่าลืมตรวจสอบว่ารันคำสั่ง flutter pub add fl_chart แล้วนะครับ
+import 'package:fl_chart/fl_chart.dart';
+import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
+import '../api/history_service.dart';
 
 class PatientDetailPage extends StatefulWidget {
   final Map<String, dynamic> patientData;
@@ -11,47 +13,135 @@ class PatientDetailPage extends StatefulWidget {
 }
 
 class _PatientDetailPageState extends State<PatientDetailPage> {
-  int _selectedTab = 1; // Default: รายสัปดาห์
+  int _selectedTab = 1; // 0 = รายวัน, 1 = รายสัปดาห์, 2 = รายเดือน
   
-  // 🖐️ ตัวแปรสลับเลือกดูสถิติแยกตามนิ้วมือ (จากรูปต้นแบบที่คุณชอบ ✨)
   String _selectedFinger = 'นิ้วชี้';
   final List<String> _fingers = ['นิ้วโป้ง', 'นิ้วชี้', 'นิ้วกลาง', 'นิ้วนาง', 'นิ้วก้อย'];
 
   String _selectedYear = 'ปี: 2569';
-  String _selectedMonth = 'เดือน: ม.ค.';
+  String _selectedMonth = 'เดือน: มิ.ย.';
 
-  // 📊 ก้อนข้อมูลสรุปสถิติตามช่วงเวลาที่คุณออกแบบไว้
-  final Map<String, Map<int, Map<String, dynamic>>> _statsByYearAndTab = {
-    'ปี: 2569': {
-      0: {
-        'totalCount': '55 ครั้ง', 'accuracy': '92 %', 'totalTime': '15 นาที', 'sessions': '1 ครั้ง',
-      },
-      1: { 
-        'totalCount': '1,550 ครั้ง', 'accuracy': '95 %', 'totalTime': '145 นาที', 'sessions': '28 ครั้ง',
-      },
-      2: {
-        'totalCount': '5,840 ครั้ง', 'accuracy': '89 %', 'totalTime': '620 นาที', 'sessions': '96 ครั้ง',
-      },
-    },
-    'ปี: 2568': {
-      0: {'totalCount': '40 ครั้ง', 'accuracy': '85 %', 'totalTime': '12 นาที', 'sessions': '1 ครั้ง'},
-      1: {'totalCount': '980 ครั้ง', 'accuracy': '88 %', 'totalTime': '90 นาที', 'sessions': '15 ครั้ง'},
-      2: {'totalCount': '3,400 ครั้ง', 'accuracy': '86 %', 'totalTime': '410 นาที', 'sessions': '50 ครั้ง'},
-    },
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _patientHistoryList = [];
+
+  final Map<String, int> _monthMap = {
+    'เดือน: ม.ค.': 1, 'เดือน: ก.พ.': 2, 'เดือน: มี.ค.': 3, 'เดือน: เม.ย.': 4,
+    'เดือน: พ.ค.': 5, 'เดือน: มิ.ย.': 6, 'เดือน: ก.ค.': 7, 'เดือน: ส.ค.': 8,
+    'เดือน: ก.ย.': 9, 'เดือน: ต.ค.': 10, 'เดือน: พ.ย.': 11, 'เดือน: ธ.ค.': 12,
+  };
+
+  // 🗺️ แมปชื่อภาษาไทยเข้ากับชื่อ Column ใน MySQL Database
+  final Map<String, String> _fingerColumnMap = {
+    'นิ้วโป้ง': 'finger_thumb',
+    'นิ้วชี้': 'finger_index',
+    'นิ้วกลาง': 'finger_middle',
+    'นิ้วนาง': 'finger_ring',
+    'นิ้วก้อย': 'finger_pinky',
   };
 
   @override
+  void initState() {
+    super.initState();
+    _fetchPatientHistory();
+  }
+
+  // 📡 ดึงข้อมูลประวัติการฝึกจริงจาก DB ของคนไข้รายนี้
+  Future<void> _fetchPatientHistory() async {
+    setState(() => _isLoading = true);
+    
+    final String userId = widget.patientData['id'].toString();
+    final data = await HistoryService.getHistoryByUserId(userId);
+
+    if (mounted) {
+      setState(() {
+        _patientHistoryList = data;
+        _isLoading = false;
+      });
+    }
+  }
+
+  // 🧮 ฟังก์ชันคำนวณสถิติตาม ช่วงเวลา / เดือน / ปี
+  Map<String, dynamic> _calculateStats() {
+    final int targetYearBE = int.tryParse(_selectedYear.replaceAll('ปี: ', '')) ?? 2569;
+    final int targetYearAD = targetYearBE - 543; // แปลง พ.ศ. เป็น ค.ศ.
+    final int targetMonth = _monthMap[_selectedMonth] ?? 6;
+
+    // 1. กรองประวัติตามปี
+    final filteredByYear = _patientHistoryList.where((item) {
+      if (item['created_at'] == null) return false;
+      try {
+        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
+        return dt.year == targetYearAD;
+      } catch (_) { 
+        return false; 
+      }
+    }).toList();
+
+    // 2. กรองประวัติตามเดือน
+    final filteredByMonth = filteredByYear.where((item) {
+      if (item['created_at'] == null) return false;
+      try {
+        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
+        return dt.month == targetMonth;
+      } catch (_) {
+        return false;
+      }
+    }).toList();
+
+    int totalCount = 0;
+    int totalDurationSec = 0;
+    double sumAccuracy = 0.0;
+
+    final targetList = (_selectedTab == 2) ? filteredByYear : filteredByMonth;
+    final int sessionCount = targetList.length;
+
+    for (var item in targetList) {
+      totalCount += (item['count'] as num? ?? 0).toInt();
+      totalDurationSec += (item['duration'] as num? ?? 0).toInt();
+      sumAccuracy += (item['accuracy'] as num? ?? 0).toDouble();
+    }
+
+    final double avgAccuracy = sessionCount > 0 ? (sumAccuracy / sessionCount) : 0.0;
+    final int totalMinutes = (totalDurationSec / 60).round();
+
+    return {
+      'totalCount': '$totalCount ครั้ง',
+      'accuracy': '${avgAccuracy.toStringAsFixed(0)} %',
+      'totalTime': '$totalMinutes นาที',
+      'sessions': '$sessionCount ครั้ง',
+      'monthData': filteredByMonth,
+    };
+  }
+
+  // 📊 [แก้ไข ✨]: ดึงค่าองศาจากคอลัมน์นิ้วที่เลือกจาก Dropdown มาพลอตเป็นจุด FlSpot บนกราฟ
+  List<FlSpot> _generateChartSpots(List<Map<String, dynamic>> monthData) {
+    if (monthData.isEmpty) {
+      return [const FlSpot(1, 0), const FlSpot(2, 0), const FlSpot(3, 0), const FlSpot(4, 0)];
+    }
+
+    final String targetColumn = _fingerColumnMap[_selectedFinger] ?? 'finger_index';
+
+    List<FlSpot> spots = [];
+    for (int i = 0; i < monthData.length; i++) {
+      final item = monthData[i];
+      // ดึงค่าองศาตามนิ้วที่เลือก (ถ้าไม่มีให้ตกไปใช้ wrist_angle หรือ accuracy)
+      double angle = (item[targetColumn] as num? ?? item['wrist_angle'] as num? ?? item['accuracy'] as num? ?? 0).toDouble();
+      if (angle > 180) angle = 180;
+      spots.add(FlSpot((i + 1).toDouble(), angle));
+    }
+
+    // เติมจุดให้ครบ 4 เซสชันขั้นต่ำเพื่อให้กราฟวาดสวยงาม
+    while (spots.length < 4) {
+      spots.add(FlSpot((spots.length + 1).toDouble(), spots.last.y));
+    }
+
+    return spots.sublist(0, 4); // แสดงเฉพาะ 4 เซสชันล่าสุด
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final Map<int, Map<String, dynamic>> statsOfSelectedYear = 
-        _statsByYearAndTab[_selectedYear] ?? _statsByYearAndTab['ปี: 2569']!;
-
-    Map<String, dynamic> currentStats = statsOfSelectedYear[_selectedTab] ?? statsOfSelectedYear[1]!;
-
-    final List<Map<String, String>> detailedHistory = [
-      {'date': '17 มิ.ย. 2569', 'time': '15:30 น.', 'duration': '15 นาที', 'score': '145°', 'mode': 'โหมดอัตโนมัติ'},
-      {'date': '16 มิ.ย. 2569', 'time': '10:15 น.', 'duration': '20 นาที', 'score': '110°', 'mode': 'โหมดฝึกงอ-เหยียด'},
-      {'date': '15 มิ.ย. 2569', 'time': '18:45 น.', 'duration': '12 นาที', 'score': '85%', 'mode': 'โหมดอัตโนมัติ'},
-    ];
+    final currentStats = _calculateStats();
+    final List<Map<String, dynamic>> currentMonthLogs = currentStats['monthData'] ?? [];
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
@@ -68,135 +158,221 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 🩺 1. ส่วนการ์ดโปรไฟล์คนไข้ด้านบน (ตามรูปที่คุณชอบ อันที่ 1)
-            _buildPatientHeaderProfile(),
-            const SizedBox(height: 24),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // 🩺 1. การ์ดโปรไฟล์คนไข้
+                  _buildPatientHeaderProfile(),
+                  const SizedBox(height: 24),
 
-            // 📈 2. ส่วนหัวกราฟพัฒนาการองศาขยับนิ้วมือ + Dropdown เลือกนิ้ว (ตามรูปอันที่ 2)
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'กราฟพัฒนาการองศาขยับนิ้วมือ 📈',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                    ),
-                    Text(
-                      'เปรียบเทียบผลการเหยียดในแต่ละเซสชัน',
-                      style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                    ),
-                  ],
-                ),
-                
-                // กล่อง Dropdown เลือกนิ้วมือขอบมน
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.grey.withOpacity(0.15)),
+                  // 📈 2. ส่วนหัวกราฟพัฒนาการ + Dropdown เลือกนิ้ว
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'พัฒนาการ องศา$_selectedFinger 📈',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                          ),
+                          const Text(
+                            'เปรียบเทียบองศาการงอ-เหยียดในแต่ละเซสชัน',
+                            style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                          ),
+                        ],
+                      ),
+                      
+                      // Dropdown เลือกนิ้วมือ
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.grey.withOpacity(0.15)),
+                        ),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: _selectedFinger,
+                            items: _fingers.map((String value) {
+                              return DropdownMenuItem<String>(
+                                value: value, 
+                                child: Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                              );
+                            }).toList(),
+                            onChanged: (newValue) => setState(() => _selectedFinger = newValue!),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: _selectedFinger,
-                      items: _fingers.map((String value) {
-                        return DropdownMenuItem<String>(value: value, child: Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)));
-                      }).toList(),
-                      onChanged: (newValue) => setState(() => _selectedFinger = newValue!),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
+                  const SizedBox(height: 16),
 
-            // 📊 3. ตัวกล่องกราฟเส้น Line Chart (จัดสเกลเส้นหนา-บางตามภาพเป๊ะๆ)
-            Container(
-              height: 250,
-              padding: const EdgeInsets.only(right: 20, top: 16, bottom: 10),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.grey.withOpacity(0.12)),
+                  // 📊 3. ตัวกล่องกราฟเส้น
+                  Container(
+                    height: 250,
+                    padding: const EdgeInsets.only(right: 20, top: 16, bottom: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.grey.withOpacity(0.12)),
+                    ),
+                    child: _buildLineChartGraphic(currentMonthLogs),
+                  ),
+                  const SizedBox(height: 28),
+
+                  // 💊 4. รายงานผลรวมแบ่งตามช่วงเวลา
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('รายงานผลรวมแบ่งตามช่วงเวลา', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      Row(
+                        children: [
+                          _buildDropdownFilter(_selectedMonth, _monthMap.keys.toList(), (val) => setState(() => _selectedMonth = val!)),
+                          const SizedBox(width: 6),
+                          _buildDropdownFilter(_selectedYear, <String>['ปี: 2569', 'ปี: 2568', 'ปี: 2567'], (val) => setState(() => _selectedYear = val!)),
+                        ],
+                      )
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      _buildCapsuleTab(0, 'รายวัน'),
+                      _buildCapsuleTab(1, 'รายสัปดาห์'),
+                      _buildCapsuleTab(2, 'รายเดือน'),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+
+                  _buildWideStatCard(
+                    icon: Icons.back_hand_rounded, 
+                    value: currentStats['totalCount'] ?? '0 ครั้ง', 
+                    label: 'จำนวนการกำ-เหยียดสะสมในช่วงเวลา', 
+                    subtitle: 'สถิติล่าสุดซิงค์ตรงกับเซิร์ฟเวอร์เรียบร้อย', 
+                    iconColor: Colors.blue
+                  ),
+                  const SizedBox(height: 12),
+
+                  Row(
+                    children: [
+                      Expanded(child: _buildModernMiniCard(Icons.track_changes_rounded, currentStats['accuracy'] ?? '0 %', 'ความแม่นยำเฉลี่ย', Colors.teal)),
+                      const SizedBox(width: 12),
+                      Expanded(child: _buildModernMiniCard(Icons.access_time_filled_rounded, currentStats['totalTime'] ?? '0 นาที', 'เวลาฝึกรวม', Colors.orange)),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+
+                  // 📋 5. รายการประวัติฝึกซ้อมย้อนหลัง (แสดงข้อมูล 5 นิ้ว)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('บันทึกการฝึกซ้อมรายเซสชัน', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      IconButton(
+                        icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
+                        onPressed: _fetchPatientHistory,
+                      )
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  
+                  _patientHistoryList.isEmpty
+                      ? Container(
+                          padding: const EdgeInsets.all(24),
+                          width: double.infinity,
+                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                          child: const Center(child: Text('คนไข้รายนี้ยังไม่มีประวัติการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))),
+                        )
+                      : ListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: _patientHistoryList.length,
+                          itemBuilder: (context, index) {
+                            final item = _patientHistoryList.reversed.toList()[index];
+                            final int count = item['count'] ?? 0;
+                            final int duration = item['duration'] ?? 0;
+                            final num? wristAngle = item['wrist_angle'];
+                            final String rawDate = item['created_at'] ?? '';
+
+                            // ดึงค่าองศาแยกนิ้ว
+                            final int fThumb = item['finger_thumb'] ?? 0;
+                            final int fIndex = item['finger_index'] ?? 0;
+                            final int fMiddle = item['finger_middle'] ?? 0;
+                            final int fRing = item['finger_ring'] ?? 0;
+                            final int fPinky = item['finger_pinky'] ?? 0;
+
+                            String formattedDate = 'ไม่ระบุวันที่';
+                            String formattedTime = '';
+
+                            if (rawDate.isNotEmpty) {
+                              try {
+                                // 1. แปลง String ให้เป็น DateTime ปลอดภัย
+                                final DateTime dt = DateTime.parse(rawDate.replaceAll('T', ' ')).toLocal();
+                                
+                                // 2. รายชื่อเดือนภาษาไทยแบบกำหนดเอง (ไม่ต้องพึ่ง Locale 'th')
+                                final List<String> thaiMonths = [
+                                  '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+                                  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+                                ];
+
+                                final String day = dt.day.toString();
+                                final String month = thaiMonths[dt.month];
+                                final String yearBE = (dt.year + 543).toString(); // แปลงเป็น พ.ศ.
+                                final String hour = dt.hour.toString().padLeft(2, '0');
+                                final String minute = dt.minute.toString().padLeft(2, '0');
+
+                                formattedDate = '$day $month $yearBE';
+                                formattedTime = '$hour:$minute น.';
+                              } catch (e) {
+                                print('Date Parse Error: $e');
+                              }
+                            }
+                            return Card(
+                              margin: const EdgeInsets.symmetric(vertical: 6),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12), 
+                                side: BorderSide(color: Colors.grey.withOpacity(0.1))
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                child: ListTile(
+                                  leading: CircleAvatar(
+                                    backgroundColor: AppTheme.backgroundColor, 
+                                    child: const Icon(Icons.blur_on_rounded, color: AppTheme.primaryColor),
+                                  ),
+                                  title: Text('$formattedDate $formattedTime', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                  subtitle: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const SizedBox(height: 4),
+                                      Text('จำนวน: $count ครั้ง | เวลา: $duration วินาที | ข้อมือ: ${wristAngle ?? 0}°', style: const TextStyle(fontSize: 12)),
+                                      const SizedBox(height: 4),
+                                      // 🖐️ สรุปองศา 5 นิ้วในแต่ละเซสชัน
+                                      Text(
+                                        'องศานิ้ว [โป้ง:$fThumb° | ชี้:$fIndex° | กลาง:$fMiddle° | นาง:$fRing° | ก้อย:$fPinky°]',
+                                        style: TextStyle(fontSize: 11, color: Colors.teal.shade700, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ],
               ),
-              child: _buildLineChartGraphic(),
             ),
-            const SizedBox(height: 28),
-
-            // 💊 4. บล็อกฟิลเตอร์สลับเวลาและสรุปตัวเลขที่คุณทำไว้ก่อนหน้านี้
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('รายงานผลรวมแบ่งตามช่วงเวลา', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-                Row(
-                  children: [
-                    _buildDropdownFilter(_selectedMonth, <String>['เดือน: ม.ค.', 'เดือน: ก.พ.', 'เดือน: มี.ค.'], (val) => setState(() => _selectedMonth = val!)),
-                    const SizedBox(width: 6),
-                    _buildDropdownFilter(_selectedYear, <String>['ปี: 2569', 'ปี: 2568'], (val) => setState(() => _selectedYear = val!)),
-                  ],
-                )
-              ],
-            ),
-            const SizedBox(height: 14),
-
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _buildCapsuleTab(0, 'รายวัน'),
-                _buildCapsuleTab(1, 'รายสัปดาห์'),
-                _buildCapsuleTab(2, 'รายเดือน'),
-              ],
-            ),
-            const SizedBox(height: 16),
-
-            _buildWideStatCard(icon: Icons.back_hand_rounded, value: currentStats['totalCount'] ?? '0 ครั้ง', label: 'จำนวนการกำ-เหยียดสะสมในช่วงเวลา', subtitle: 'ระดับพัฒนาการโดยรวมมีความต่อเนื่องดีขึ้น', iconColor: Colors.blue),
-            const SizedBox(height: 12),
-
-            Row(
-              children: [
-                Expanded(child: _buildModernMiniCard(Icons.track_changes_rounded, currentStats['accuracy'] ?? '0 %', 'ความแม่นยำเฉลี่ย', Colors.teal)),
-                const SizedBox(width: 12),
-                Expanded(child: _buildModernMiniCard(Icons.access_time_filled_rounded, currentStats['totalTime'] ?? '0 นาที', 'เวลาฝึกรวม', Colors.orange)),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            const Text('บันทึกการฝึกซ้อมรายเซสชัน', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-            const SizedBox(height: 12),
-            
-            ListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: detailedHistory.length,
-              itemBuilder: (context, index) {
-                final item = detailedHistory[index];
-                return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6),
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.withOpacity(0.1))),
-                  child: ListTile(
-                    leading: CircleAvatar(backgroundColor: AppTheme.backgroundColor, child: const Icon(Icons.blur_on_rounded, color: AppTheme.primaryColor)),
-                    title: Text('${item['date']} - ${item['time']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    subtitle: Text('${item['mode']} | ${item['duration']}', style: const TextStyle(fontSize: 12)),
-                    trailing: Text(item['score']!, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.primaryColor)),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
     );
   }
 
-  // 🏥 Widget การ์ดโปรไฟล์ส่วนบนตามรูปถ่ายของคุณ
+  // 🏥 Widget การ์ดโปรไฟล์ส่วนบน
   Widget _buildPatientHeaderProfile() {
     return Container(
       width: double.infinity,
@@ -227,7 +403,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'รหัสผู้ป่วย: ${widget.patientData['id']}',
+                      'รหัสผู้ป่วย: HN-${widget.patientData['id']}',
                       style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontFamily: 'mono'),
                     ),
                   ],
@@ -239,7 +415,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
           const Text('วินิจฉัย/อาการคนไข้:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppTheme.textSecondary)),
           const SizedBox(height: 6),
           Text(
-            '${widget.patientData['symptom']}',
+            '${widget.patientData['symptom'] ?? "ไม่มีระบุอาการ"}',
             style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary, height: 1.4),
           ),
         ],
@@ -247,8 +423,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  // 📊 ตัวสร้างกราฟเส้น FL Chart ลอกมิติแกน X/Y มาจากรูปภาพ
-  Widget _buildLineChartGraphic() {
+  // 📊 ตัวสร้างกราฟเส้น FL Chart
+  Widget _buildLineChartGraphic(List<Map<String, dynamic>> monthData) {
+    final spots = _generateChartSpots(monthData);
+
     return LineChart(
       LineChartData(
         gridData: FlGridData(
@@ -266,7 +444,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               showTitles: true,
               interval: 30,
               reservedSize: 35,
-              getTitlesWidget: (value, meta) => Text('${value.toInt()}', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
+              getTitlesWidget: (value, meta) => Text('${value.toInt()}°', style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.bold)),
             ),
           ),
           bottomTitles: AxisTitles(
@@ -274,10 +452,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
               showTitles: true,
               interval: 1,
               getTitlesWidget: (value, meta) {
-                if (value == 1) return const Text('ครั้งที่ 1', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold));
-                if (value == 2) return const Text('ครั้งที่ 2', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold));
-                if (value == 3) return const Text('ครั้งที่ 3', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold));
-                if (value == 4) return const Text('ครั้งที่ 4', style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold));
+                int idx = value.toInt();
+                if (idx >= 1 && idx <= 4) {
+                  return Text('ครั้งที่ $idx', style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold));
+                }
                 return const Text('');
               },
             ),
@@ -288,32 +466,34 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
         minY: 0, maxY: 180,
         lineBarsData: [
           LineChartBarData(
-            spots: _selectedFinger == 'นิ้วชี้' 
-                ? [const FlSpot(1, 45), const FlSpot(2, 85), const FlSpot(3, 110), const FlSpot(4, 145)] // คาบองศาตรงตามรูปเป๊ะๆ ครับ ✨
-                : [const FlSpot(1, 30), const FlSpot(2, 60), const FlSpot(3, 95), const FlSpot(4, 120)],
-            isCurved: false, // ทำเป็นเส้นตรงหักมุมคมๆ ตามกราฟต้นแบบที่คุณส่งมาครับ
+            spots: spots,
+            isCurved: false,
             color: AppTheme.primaryColor,
-            barWidth: 4, // เพิ่มความหนาของเส้นส้มอิฐ
+            barWidth: 4,
             isStrokeCapRound: true,
             dotData: FlDotData(
               show: true,
-              // getDotNavigator: (p0, p1, p2, p3) => FlDotNavigator(),
-              getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: AppTheme.primaryColor, strokeWidth: 1, strokeColor: Colors.white),
+              getDotPainter: (spot, percent, barData, index) => FlDotCirclePainter(radius: 5, color: AppTheme.primaryColor, strokeWidth: 1.5, strokeColor: Colors.white),
             ),
-            belowBarData: BarAreaData(show: true, color: AppTheme.primaryColor.withOpacity(0.05)),
+            belowBarData: BarAreaData(show: true, color: AppTheme.primaryColor.withOpacity(0.08)),
           ),
         ],
       ),
     );
   }
 
-  // สไตล์ Dropdown คัดกรองช่วงเวลารอง
   Widget _buildDropdownFilter(String currentVal, List<String> listItems, Function(String?) eventChange) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.withOpacity(0.15))),
       child: DropdownButtonHideUnderline(
-        child: DropdownButton<String>(value: currentVal, icon: const Icon(Icons.arrow_drop_down, size: 16, color: AppTheme.primaryColor), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary), items: listItems.map((String val) => DropdownMenuItem<String>(value: val, child: Text(val))).toList(), onChanged: eventChange),
+        child: DropdownButton<String>(
+          value: currentVal, 
+          icon: const Icon(Icons.arrow_drop_down, size: 16, color: AppTheme.primaryColor), 
+          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary), 
+          items: listItems.map((String val) => DropdownMenuItem<String>(value: val, child: Text(val))).toList(), 
+          onChanged: eventChange,
+        ),
       ),
     );
   }
@@ -324,7 +504,11 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       onTap: () => setState(() => _selectedTab = index),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        decoration: BoxDecoration(color: isSelected ? AppTheme.primaryColor : Colors.white, borderRadius: BorderRadius.circular(20), boxShadow: isSelected ? [BoxShadow(color: AppTheme.primaryColor.withOpacity(0.2), blurRadius: 6, offset: const Offset(0, 3))] : []),
+        decoration: BoxDecoration(
+          color: isSelected ? AppTheme.primaryColor : Colors.white, 
+          borderRadius: BorderRadius.circular(20), 
+          boxShadow: isSelected ? [BoxShadow(color: AppTheme.primaryColor.withOpacity(0.2), blurRadius: 6, offset: const Offset(0, 3))] : [],
+        ),
         child: Text(label, style: TextStyle(fontWeight: FontWeight.bold, color: isSelected ? Colors.white : AppTheme.textSecondary, fontSize: 13)),
       ),
     );
@@ -332,7 +516,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Widget _buildWideStatCard({required IconData icon, required String value, required String label, required String subtitle, required Color iconColor}) {
     return Card(
-      elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), color: Colors.white,
+      elevation: 0, 
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+      color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Row(
@@ -359,7 +545,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
   Widget _buildModernMiniCard(IconData icon, String value, String label, Color iconColor) {
     return Card(
-      elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), color: Colors.white,
+      elevation: 0, 
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+      color: Colors.white,
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(

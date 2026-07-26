@@ -71,4 +71,44 @@ class DeviceService {
       return {'success': false, 'message': 'ไม่สามารถเชื่อมต่อเซิร์ฟเวอร์ได้'};
     }
   }
+
+  static Future<bool> sendControlCommand(int deviceId, String command) async {
+  try {
+    final response = await http.post(
+      Uri.parse('${ApiConfig.baseUrl}/device/command'),
+      headers: ApiConfig.headers,
+      body: jsonEncode({
+        'device_id': deviceId,
+        'command': command, // 'START' หรือ 'STOP'
+      }),
+    );
+
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+      return data['status'] == 'success';
+    }
+    return false;
+  } catch (e) {
+    print('Error sending command to device: $e');
+    return false;
+  }
+}
+
+// 📡 [เพิ่มใหม่] เช็กสเตตัสการทำงานและจำนวนรอบ Real-time จาก ESP32
+static Future<Map<String, dynamic>?> getDeviceStatus(int deviceId) async {
+  try {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/device/status/$deviceId'),
+      headers: ApiConfig.headers,
+    );
+
+    if (response.statusCode == 200) {
+      return Map<String, dynamic>.from(jsonDecode(response.body));
+    }
+    return null;
+  } catch (e) {
+    print('Error getting device status: $e');
+    return null;
+  }
+}
 }
