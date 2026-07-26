@@ -1,7 +1,7 @@
 class ApiConfig {
   // 🌐 ปรับเปลี่ยน IP ตามสภาพแวดล้อม
-  static const String baseUrl = 'http://localhost:5000/api';
-  static const String imageBaseUrl = 'http://localhost:5000/uploads';
+  static const String baseUrl = 'http://10.31.50.212:5000/api';
+  static const String imageBaseUrl = 'http://10.31.50.212:5000/uploads';
 
   // 📝 Standard Headers
   static const Map<String, String> headers = {

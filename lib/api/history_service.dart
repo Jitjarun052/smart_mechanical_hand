@@ -23,25 +23,34 @@ class HistoryService {
   }
 
   /// 🩺 ดึงประวัติฝึกซ้อมเฉพาะของคนไข้ ID นี้
-  static Future<List<Map<String, dynamic>>> getHistoryByUserId(String userId) async {
-    try {
-      final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/history/user/$userId'),
-        headers: ApiConfig.headers,
-      );
+  static Future<List<dynamic>> getHistoryByUserId(String userId) async {
+  try {
+    final response = await http.get(
+      Uri.parse('${ApiConfig.baseUrl}/history/user/$userId'),
+      headers: ApiConfig.headers,
+    );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['status'] == 'success') {
-          return List<Map<String, dynamic>>.from(data['history']);
+    if (response.statusCode == 200) {
+      final data = jsonDecode(response.body);
+
+      // 🟢 กรณี Backend ส่งกลับมาเป็น Map {"status": "success", "history": [...]}
+      if (data is Map<String, dynamic>) {
+        if (data.containsKey('history') && data['history'] is List) {
+          return data['history'];
         }
+        return [];
+      } 
+      // 🟢 กรณี Backend ส่งกลับมาเป็น List [...] ตรงๆ
+      else if (data is List) {
+        return data;
       }
-      return [];
-    } catch (e) {
-      print('Error fetching patient history: $e');
-      return [];
     }
+    return [];
+  } catch (e) {
+    print('❌ Error fetching patient history: $e');
+    return [];
   }
+}
 
   static Future<Map<String, dynamic>?> getTodaySummary(String userId) async {
   try {
@@ -62,5 +71,29 @@ class HistoryService {
     return null;
   }
 }
+
+/// 💾 บันทึกข้อมูลประวัติการฝึกซ้อมใหม่ลงฐานข้อมูล
+  static Future<Map<String, dynamic>> addHistory(Map<String, dynamic> historyData) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/history'), // ยิงไปที่ POST /api/history
+        headers: ApiConfig.headers,
+        body: jsonEncode(historyData),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        return {
+          'status': 'error',
+          'message': 'เกิดข้อผิดพลาดจากเซิร์ฟเวอร์ (${response.statusCode})'
+        };
+      }
+    } catch (e) {
+      print('Error adding history: $e');
+      return {'status': 'error', 'message': e.toString()};
+    }
+  }
+  
 
 }

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // 💡 อย่าลืม pub add intl ไว้ฟอร์แมตวันที่ (ถ้าไม่มีสามารถแปลง String ธรรมดาได้)
+import 'package:intl/intl.dart';
 import '../api/history_service.dart';
 import '../theme/app_theme.dart';
+import 'history_detail_page.dart'; // 👈 นำเข้า HistoryDetailPage
 
 class QuickHistoryPage extends StatefulWidget {
   const QuickHistoryPage({super.key});
@@ -29,11 +30,11 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     _fetchHistoryData();
   }
 
-  // 📡 ฟังก์ชันดึงประวัติการฝึกจริงจาก Backend (ตาราง history)[cite: 5]
+  // 📡 ฟังก์ชันดึงประวัติการฝึกจริงจาก Backend (ตาราง history)
   Future<void> _fetchHistoryData() async {
     setState(() => _isLoading = true);
 
-    // ดึงข้อมูลผ่าน HistoryService ที่เราสร้างไว้[cite: 5]
+    // ดึงข้อมูลผ่าน HistoryService ที่เราสร้างไว้
     final data = await HistoryService.getHistoryList();
 
     if (mounted) {
@@ -44,15 +45,30 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     }
   }
 
-  // 🗓️ ฟังก์ชันช่วยแปลงวันที่จาก Database เป็นฟอร์แมตอ่านง่าย
+  // 🗓️ ฟังก์ชันแปลงวันที่และเวลาไทย
   String _formatDate(String? rawDate) {
     if (rawDate == null || rawDate.isEmpty) return 'ไม่ระบุวันที่';
     try {
-      final dateTime = DateTime.parse(rawDate).toLocal();
-      // ตัวอย่างผลลัพธ์: 18 ก.ค. 2569 เวลา 14:30 น.
-      return DateFormat('d MMM yyyy • HH:mm', 'th_TH').format(dateTime);
+      String formattedRaw = rawDate.replaceAll(' ', 'T');
+      if (!formattedRaw.endsWith('Z') && !formattedRaw.contains('+')) {
+        formattedRaw += 'Z';
+      }
+
+      DateTime dt = DateTime.parse(formattedRaw).toLocal();
+      int yearBE = dt.year + 543;
+
+      const monthsTH = [
+        '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+      ];
+      String monthStr = monthsTH[dt.month];
+
+      String hour = dt.hour.toString().padLeft(2, '0');
+      String minute = dt.minute.toString().padLeft(2, '0');
+
+      return '${dt.day} $monthStr $yearBE • $hour:$minute น.';
     } catch (e) {
-      // กรณี Parse วันที่ไม่ผ่าน ให้ส่งข้อความเดิมกลับไป
+      debugPrint('Format Date Error: $e');
       return rawDate;
     }
   }
@@ -72,7 +88,7 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            onPressed: _fetchHistoryData, // กดปุ่มมุมขวาเพื่อโหลดข้อมูลใหม่
+            onPressed: _fetchHistoryData,
           ),
         ],
       ),
@@ -91,13 +107,11 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
                     itemBuilder: (context, index) {
                       final item = _historyData[index];
 
-                      // 🛠️ ดึงค่าพารามิเตอร์จากคอลัมน์ในตาราง history จริง[cite: 5]
                       final count = '${item['count'] ?? 0} ครั้ง';
                       final duration = '${item['duration'] ?? 0} วินาที';
                       final accuracy = '${item['accuracy'] ?? 0}%';
                       final dateStr = _formatDate(item['created_at'] ?? item['train_date']);
 
-                      // 🎨 วนแถบสีตกแต่งตาม Index
                       final indicatorColor = _accentColors[index % _accentColors.length];
 
                       return Container(
@@ -113,57 +127,70 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
                             ),
                           ],
                         ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: IntrinsicHeight(
-                            child: Row(
-                              children: [
-                                // 🎨 1. แถบสีตกแต่งด้านซ้าย (Color Indicator)
-                                Container(
-                                  width: 5,
-                                  color: indicatorColor,
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () {
+                              // ⚡ กดการ์ดแล้วเปิดข้ามไปหน้า HistoryDetailPage
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => HistoryDetailPage(historyData: item),
                                 ),
-                                const SizedBox(width: 16),
-
-                                // 📝 2. ส่วนเนื้อหาข้อมูลหลัก
-                                Expanded(
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        // แถววันที่ + ไอคอนลูกศรขวา[cite: 11]
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              dateStr,
-                                              style: const TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold,
-                                                color: AppTheme.textPrimary,
-                                              ),
-                                            ),
-                                            const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 16),
-
-                                        // แถวแสดงพารามิเตอร์ 3 ค่า (จำนวนครั้ง, เวลา, ความแม่นยำ)[cite: 11]
-                                        Row(
-                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            _buildStatusItem(Icons.back_hand_rounded, 'จำนวนครั้ง', count),
-                                            _buildStatusItem(Icons.access_time_filled_rounded, 'เวลา', duration),
-                                            _buildStatusItem(Icons.track_changes_rounded, 'ความแม่นยำ', accuracy),
-                                          ],
-                                        ),
-                                      ],
+                              );
+                            },
+                            borderRadius: BorderRadius.circular(16),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(16),
+                              child: IntrinsicHeight(
+                                child: Row(
+                                  children: [
+                                    // 🎨 1. แถบสีตกแต่งด้านซ้าย
+                                    Container(
+                                      width: 5,
+                                      color: indicatorColor,
                                     ),
-                                  ),
+                                    const SizedBox(width: 16),
+
+                                    // 📝 2. ส่วนเนื้อหาข้อมูลหลัก
+                                    Expanded(
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                Text(
+                                                  dateStr,
+                                                  style: const TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: AppTheme.textPrimary,
+                                                  ),
+                                                ),
+                                                const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Colors.grey),
+                                              ],
+                                            ),
+                                            const SizedBox(height: 16),
+
+                                            Row(
+                                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                              children: [
+                                                _buildStatusItem(Icons.back_hand_rounded, 'จำนวนครั้ง', count),
+                                                _buildStatusItem(Icons.access_time_filled_rounded, 'เวลา', duration),
+                                                _buildStatusItem(Icons.track_changes_rounded, 'ความแม่นยำ', accuracy),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                  ],
                                 ),
-                                const SizedBox(width: 8),
-                              ],
+                              ),
                             ),
                           ),
                         ),
@@ -174,7 +201,6 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     );
   }
 
-  // 📭 หน้าตาแสดงผลเมื่อยังไม่มีประวัติในฐานข้อมูล
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -196,7 +222,6 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     );
   }
 
-  // Widget ย่อยสำหรับสร้างชุดไอคอน + ข้อความ (ตัวพารามิเตอร์)[cite: 11]
   Widget _buildStatusItem(IconData icon, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

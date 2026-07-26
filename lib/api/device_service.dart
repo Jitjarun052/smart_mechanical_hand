@@ -75,21 +75,22 @@ class DeviceService {
   static Future<bool> sendControlCommand(int deviceId, String command) async {
   try {
     final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/device/command'),
-      headers: ApiConfig.headers,
+      Uri.parse('${ApiConfig.baseUrl}/device/control/$deviceId'),
+      headers: ApiConfig.headers, // ต้องแนบ 'Content-Type': 'application/json'
       body: jsonEncode({
-        'device_id': deviceId,
-        'command': command, // 'START' หรือ 'STOP'
+        'command': command, // ส่ง 'START' หรือ 'STOP'
       }),
     );
 
     if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      return data['status'] == 'success';
+      print('✅ ส่งคำสั่ง $command สำเร็จ: ${response.body}');
+      return true;
+    } else {
+      print('❌ ส่งคำสั่งไม่สำเร็จ HTTP Code: ${response.statusCode}');
+      return false;
     }
-    return false;
   } catch (e) {
-    print('Error sending command to device: $e');
+    print('❌ sendControlCommand Error: $e');
     return false;
   }
 }

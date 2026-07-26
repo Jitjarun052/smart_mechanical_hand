@@ -22,7 +22,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   String _selectedMonth = 'เดือน: มิ.ย.';
 
   bool _isLoading = true;
-  List<Map<String, dynamic>> _patientHistoryList = [];
+  List<dynamic> _patientHistoryList = [];
 
   final Map<String, int> _monthMap = {
     'เดือน: ม.ค.': 1, 'เดือน: ก.พ.': 2, 'เดือน: มี.ค.': 3, 'เดือน: เม.ย.': 4,
@@ -54,7 +54,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
     if (mounted) {
       setState(() {
-        _patientHistoryList = data;
+        _patientHistoryList = data; // 🟢 ปลอดภัย ไม่ติด Type Error แล้ว!
         _isLoading = false;
       });
     }
@@ -113,8 +113,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     };
   }
 
-  // 📊 [แก้ไข ✨]: ดึงค่าองศาจากคอลัมน์นิ้วที่เลือกจาก Dropdown มาพลอตเป็นจุด FlSpot บนกราฟ
-  List<FlSpot> _generateChartSpots(List<Map<String, dynamic>> monthData) {
+  // 📊 ดึงค่าองศาจากคอลัมน์นิ้วที่เลือกจาก Dropdown มาพลอตเป็นจุด FlSpot บนกราฟ
+  List<FlSpot> _generateChartSpots(List<dynamic> monthData) {
     if (monthData.isEmpty) {
       return [const FlSpot(1, 0), const FlSpot(2, 0), const FlSpot(3, 0), const FlSpot(4, 0)];
     }
@@ -124,18 +124,18 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     List<FlSpot> spots = [];
     for (int i = 0; i < monthData.length; i++) {
       final item = monthData[i];
-      // ดึงค่าองศาตามนิ้วที่เลือก (ถ้าไม่มีให้ตกไปใช้ wrist_angle หรือ accuracy)
-      double angle = (item[targetColumn] as num? ?? item['wrist_angle'] as num? ?? item['accuracy'] as num? ?? 0).toDouble();
-      if (angle > 180) angle = 180;
-      spots.add(FlSpot((i + 1).toDouble(), angle));
+      if (item is Map<String, dynamic>) {
+        double angle = (item[targetColumn] as num? ?? item['wrist_angle'] as num? ?? item['accuracy'] as num? ?? 0).toDouble();
+        if (angle > 180) angle = 180;
+        spots.add(FlSpot((i + 1).toDouble(), angle));
+      }
     }
 
-    // เติมจุดให้ครบ 4 เซสชันขั้นต่ำเพื่อให้กราฟวาดสวยงาม
     while (spots.length < 4) {
-      spots.add(FlSpot((spots.length + 1).toDouble(), spots.last.y));
+      spots.add(FlSpot((spots.length + 1).toDouble(), spots.isNotEmpty ? spots.last.y : 0));
     }
 
-    return spots.sublist(0, 4); // แสดงเฉพาะ 4 เซสชันล่าสุด
+    return spots.sublist(0, 4);
   }
 
   @override

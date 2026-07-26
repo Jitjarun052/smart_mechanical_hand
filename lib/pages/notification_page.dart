@@ -1,47 +1,41 @@
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import '../api/notification_service.dart';
+import '../widgets/notification/notification_card.dart'; // 👈 นำเข้า Card Widget ที่แยกไว้
+import 'achievement_page.dart';
 
-class NotificationPage extends StatelessWidget {
-  const NotificationPage({super.key});
+class NotificationPage extends StatefulWidget {
+  final int userId;
+
+  const NotificationPage({super.key, required this.userId});
+
+  @override
+  State<NotificationPage> createState() => _NotificationPageState();
+}
+
+class _NotificationPageState extends State<NotificationPage> {
+  bool _isLoading = true;
+  List<Map<String, dynamic>> _notifications = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchNotifications();
+  }
+
+  Future<void> _fetchNotifications() async {
+    setState(() => _isLoading = true);
+    final list = await NotificationService.getNotifications(widget.userId);
+    if (mounted) {
+      setState(() {
+        _notifications = list;
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    // 🔔 Mock รายการแจ้งเตือนที่สอดรับกับความก้าวหน้าของถุงมือกล
-    final List<Map<String, dynamic>> notifications = [
-      {
-        'title': 'ถึงเวลาออกกำลังกายแล้ว!',
-        'subtitle': 'อย่าลืมออกกำลังกายวันนี้ด้วยนะคะ',
-        'time': '10 นาทีที่แล้ว',
-        'icon': Icons.fitness_center_rounded,
-        'iconColor': Colors.blue,
-        'isUnread': true, // 🔵 แสดงจุดฟ้าว่ายังไม่อ่าน
-      },
-      {
-        'title': 'ความสำเร็จใหม่! 🏆',
-        'subtitle': 'คุณทำสถิติฝึกเหยียดนิ้วได้สำเร็จ 5 วันติดต่อกัน',
-        'time': '1 ชั่วโมงที่แล้ว',
-        'icon': Icons.emoji_events_rounded,
-        'iconColor': Colors.amber,
-        'isUnread': true,
-      },
-      {
-        'title': 'อัปเดตแอปเวอร์ชันใหม่',
-        'subtitle': 'อัปเดตระบบเสถียรภาพการรับค่าองศาเซนเซอร์เพื่อการใช้งานที่ดีขึ้น',
-        'time': '1 วันที่แล้ว',
-        'icon': Icons.system_update_rounded,
-        'iconColor': Colors.grey,
-        'isUnread': false,
-      },
-      {
-        'title': 'ยินดีต้อนรับคุณผู้ป่วย!',
-        'subtitle': 'ขอบคุณที่เลือกใช้งานระบบกายภาพบำบัดมือกลอัจฉริยะ เริ่มต้นรันเซสชันแรกกันเลย!',
-        'time': '3 วันที่แล้ว',
-        'icon': Icons.handshake_rounded,
-        'iconColor': AppTheme.primaryColor,
-        'isUnread': false,
-      },
-    ];
-    
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
@@ -52,78 +46,46 @@ class NotificationPage extends StatelessWidget {
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text(
-          'การแจ้งเตือน',
+          'การแจ้งเตือนและความสำเร็จ',
           style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 18),
         ),
         centerTitle: true,
-        
       ),
-      body: ListView.builder(
-        padding: const EdgeInsets.all(16.0),
-        itemCount: notifications.length,
-        itemBuilder: (context, index) {
-          final item = notifications[index];
-          return Card(
-            margin: const EdgeInsets.symmetric(vertical: 6.0),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-              side: BorderSide(color: Colors.grey.withOpacity(0.1)),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                children: [
-                  // 🎨 วงกลมไอคอนฝั่งซ้ายสไตล์ Material
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: (item['iconColor'] as Color).withOpacity(0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(item['icon'], color: item['iconColor'], size: 24),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor))
+          : _notifications.isEmpty
+              ? const Center(child: Text('ยังไม่มีการแจ้งเตือนในขณะนี้'))
+              : RefreshIndicator(
+                  onRefresh: _fetchNotifications,
+                  color: AppTheme.primaryColor,
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(16.0),
+                    itemCount: _notifications.length,
+                    itemBuilder: (context, index) {
+                      final item = _notifications[index];
+                      return NotificationCard(
+                        item: item,
+                        onTap: () async {
+                          final bool isUnread = (item['is_unread'] ?? 0) == 1;
+                          final String type = item['type'] ?? 'system';
+
+                          if (isUnread && item['notification_id'] != null) {
+                            await NotificationService.markAsRead(item['notification_id']);
+                            _fetchNotifications();
+                          }
+                          if (type == 'achievement' && context.mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => AchievementPage(userId: widget.userId),
+                              ),
+                            );
+                          }
+                        },
+                      );
+                    },
                   ),
-                  const SizedBox(width: 16),
-                  
-                  // 📝 รายละเอียดข้อความ คุมโครงสร้างกันตัวหนังสือล้นจอ
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item['title'],
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: AppTheme.textPrimary),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          item['subtitle'],
-                          style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          item['time'],
-                          style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  // 🔵 จุดไข่ปลาสีฟ้าแสดงสถานะยังไม่ได้อ่านด้านขวาสุด
-                  if (item['isUnread'])
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: const BoxDecoration(
-                        color: Colors.blue,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
+                ),
     );
   }
 }

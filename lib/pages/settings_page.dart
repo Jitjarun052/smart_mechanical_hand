@@ -7,10 +7,11 @@ import '../theme/app_theme.dart';
 import 'patient_info_page.dart';
 import 'doctor_info_page.dart';
 import 'device_setting_page.dart';
+import 'achievement_page.dart'; // 👈 นำเข้า AchievementPage
 import '../screens/sign_in_screen.dart';
 
 class SettingsPage extends StatefulWidget {
-  final String? userToken; // 🔑 รับ Token เพื่อดึงข้อมูลเฉพาะบุคคล
+  final String? userToken;
 
   const SettingsPage({super.key, this.userToken});
 
@@ -21,21 +22,19 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   bool _isBluetoothConnected = true;
   bool _autoSyncData = true;
+  bool _enableReminder = true;
   bool _isLoading = true;
 
-  // 👤 ตัวแปร Profile
   int? _userId;
   String _userName = 'ผู้ป่วย';
   String _userEmail = 'patient@health.com';
   String? _userImage;
 
-  // ⚡ ตัวแปร Device
   int? _deviceId;
   String? _deviceName;
   String? _serialNumber;
   int? _deviceStatus;
 
-  // 📊 ตัวแปร สถิติฝึกซ้อม
   int _totalSessions = 0;
   int _totalMinutes = 0;
   int _totalCount = 0;
@@ -46,12 +45,10 @@ class _SettingsPageState extends State<SettingsPage> {
     _fetchSettingsData();
   }
 
-  // 📡 ดึงข้อมูล Profile + Device + Stats จาก Backend
   Future<void> _fetchSettingsData() async {
     setState(() => _isLoading = true);
 
     if (widget.userToken != null && widget.userToken!.isNotEmpty) {
-      // 1. ดึง Profile
       final userResult = await AuthService.getMe(widget.userToken!);
       if (userResult['success'] == true) {
         final userData = userResult['user'];
@@ -67,7 +64,6 @@ class _SettingsPageState extends State<SettingsPage> {
           });
         }
 
-        // 2. ดึงข้อมูลอุปกรณ์
         if (userId != null) {
           final deviceData = await DeviceService.getDeviceByUserId(userId);
           if (deviceData != null && mounted) {
@@ -82,7 +78,6 @@ class _SettingsPageState extends State<SettingsPage> {
       }
     }
 
-    // 3. ดึงประวัติมาคำนวณสถิติรวม
     final historyData = await HistoryService.getHistoryList();
     if (mounted) {
       int sumCount = 0;
@@ -117,7 +112,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 🟠 Header Profile ส่วนบน
+                // 🟠 Profile Header
                 Container(
                   width: double.infinity,
                   decoration: const BoxDecoration(color: AppTheme.primaryColor),
@@ -172,7 +167,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                 ),
 
-                // 📊 แผงสถิติรวมจริง
+                // 📊 Profile Stat Bar
                 Container(
                   color: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16.0),
@@ -189,30 +184,27 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 const SizedBox(height: 20),
 
-                // 🦾 การ์ดแสดงอุปกรณ์ของฉัน
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24.0),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // 🦾 อุปกรณ์ของฉัน
                       _buildSectionTitle('อุปกรณ์ของฉัน'),
                       const SizedBox(height: 12),
-
                       GestureDetector(
                         onTap: () {
-                        if (isDeviceBound) {
-                          // 📱 ถ้าผูกแล้ว ให้เปิด BottomSheet โชว์ข้อมูลและปุ่มยกเลิกการเชื่อมต่อ
-                          _showUnbindBottomSheet(context);
-                        } else {
-                          // 📝 ถ้ายังไม่ผูก ค่อยส่งไปหน้าลงทะเบียนผูกอุปกรณ์
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) =>  DeviceSettingPage(userId: _userId),
-                            ),
-                          ).then((_) => _fetchSettingsData()); // รีเฟรชข้อมูลเมื่อกลับมา
-                        }
-                      },
+                          if (isDeviceBound) {
+                            _showUnbindBottomSheet(context);
+                          } else {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => DeviceSettingPage(userId: _userId),
+                              ),
+                            ).then((_) => _fetchSettingsData());
+                          }
+                        },
                         child: Card(
                           elevation: 0,
                           shape: RoundedRectangleBorder(
@@ -285,7 +277,61 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       const SizedBox(height: 24),
 
-                      _buildSectionTitle('การเชื่อมต่อและอุปกรณ์'),
+                      // 🏆 🏆 [เพิ่มก้อนเมนูใหม่ ✨] กิจกรรมและความสำเร็จ
+                      _buildSectionTitle('กิจกรรมและความสำเร็จ'),
+                      const SizedBox(height: 12),
+                      Card(
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        color: Colors.white,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4.0),
+                          child: ListTile(
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => AchievementPage(userId: _userId),
+                                ),
+                              );
+                            },
+                            leading: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.withOpacity(0.15),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.emoji_events_rounded,
+                                color: Colors.amber,
+                                size: 22,
+                              ),
+                            ),
+                            title: const Text(
+                              'ตราความสำเร็จและพัฒนาการ',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              'ดูเข็มตราความสำเร็จและเป้าหมายการฝึก',
+                              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                            ),
+                            trailing: const Icon(
+                              Icons.arrow_forward_ios_rounded,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+
+                      // 📡 การเชื่อมต่อและการแจ้งเตือน
+                      _buildSectionTitle('การเชื่อมต่อและการแจ้งเตือน'),
                       const SizedBox(height: 12),
                       Card(
                         elevation: 0,
@@ -346,12 +392,36 @@ class _SettingsPageState extends State<SettingsPage> {
                                       setState(() => _autoSyncData = value),
                                 ),
                               ),
+                              const Divider(height: 1),
+                              ListTile(
+                                leading: const Icon(
+                                  Icons.notifications_active_rounded,
+                                  color: Colors.amber,
+                                ),
+                                title: const Text(
+                                  'เตือนฝึกซ้อมประจำวัน',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                subtitle: const Text(
+                                  'แจ้งเตือนให้ออกกำลังกายมือตามเวลาที่กำหนด',
+                                ),
+                                trailing: Switch(
+                                  value: _enableReminder,
+                                  activeColor: AppTheme.primaryColor,
+                                  onChanged: (value) =>
+                                      setState(() => _enableReminder = value),
+                                ),
+                              ),
                             ],
                           ),
                         ),
                       ),
                       const SizedBox(height: 24),
 
+                      // 👤 บัญชีผู้ใช้งาน
                       _buildSectionTitle('บัญชีผู้ใช้งาน'),
                       const SizedBox(height: 12),
                       Card(
@@ -369,7 +439,6 @@ class _SettingsPageState extends State<SettingsPage> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      // 🔑 แนบ userToken ส่งไปให้ PatientInfoScreen ดึงข้อมูลจริง
                                       builder: (context) => PatientInfoScreen(userToken: widget.userToken),
                                     ),
                                   );
@@ -397,7 +466,6 @@ class _SettingsPageState extends State<SettingsPage> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      // 🔑 แนบ userToken ไปให้ DoctorInfoScreen
                                       builder: (context) => DoctorInfoScreen(userToken: widget.userToken), 
                                     ),
                                   );
@@ -425,7 +493,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       const SizedBox(height: 32),
 
-                      // 🔴 ปุ่มออกจากระบบ
+                      // 🔴 ออกจากระบบ
                       Card(
                         elevation: 0,
                         shape: RoundedRectangleBorder(
@@ -528,96 +596,95 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           );
   }
-  void _showUnbindBottomSheet(BuildContext context) {
-  showModalBottomSheet(
-    context: context,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-    ),
-    backgroundColor: Colors.white,
-    builder: (context) => Padding(
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: const [
-              Icon(Icons.precision_manufacturing_rounded, color: AppTheme.primaryColor, size: 26),
-              SizedBox(width: 12),
-              Text(
-                'รายละเอียดอุปกรณ์',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-              ),
-            ],
-          ),
-          const Divider(height: 32),
-          Text('ชื่ออุปกรณ์: ${_deviceName ?? "ถุงมือกลกายภาพบำบัด"}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          Text('Serial Number: $_serialNumber', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-          const SizedBox(height: 8),
-          const Text('สถานะ: เชื่อมต่อและพร้อมใช้งาน', style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 28),
 
-          // 🔴 ปุ่มยกเลิกการเชื่อมต่อ
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red.shade50,
-                foregroundColor: Colors.red,
-                elevation: 0,
-                side: BorderSide(color: Colors.red.shade200),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-              ),
-              icon: const Icon(Icons.link_off_rounded),
-              label: const Text('ยกเลิกการผูกอุปกรณ์นี้', style: TextStyle(fontWeight: FontWeight.bold)),
-              onPressed: () async {
-                Navigator.pop(context); // ปิด BottomSheet
-                _confirmUnbindDevice(); // เรียก Dialog ยืนยัน
-              },
+  void _showUnbindBottomSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      backgroundColor: Colors.white,
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.precision_manufacturing_rounded, color: AppTheme.primaryColor, size: 26),
+                SizedBox(width: 12),
+                Text(
+                  'รายละเอียดอุปกรณ์',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                ),
+              ],
             ),
+            const Divider(height: 32),
+            Text('ชื่ออุปกรณ์: ${_deviceName ?? "ถุงมือกลกายภาพบำบัด"}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('Serial Number: $_serialNumber', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            const SizedBox(height: 8),
+            const Text('สถานะ: เชื่อมต่อและพร้อมใช้งาน', style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 28),
+
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade50,
+                  foregroundColor: Colors.red,
+                  elevation: 0,
+                  side: BorderSide(color: Colors.red.shade200),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: const Icon(Icons.link_off_rounded),
+                label: const Text('ยกเลิกการผูกอุปกรณ์นี้', style: TextStyle(fontWeight: FontWeight.bold)),
+                onPressed: () async {
+                  Navigator.pop(context);
+                  _confirmUnbindDevice();
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmUnbindDevice() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('ยืนยันการยกเลิกการผูกอุปกรณ์'),
+        content: const Text('คุณต้องการยกเลิกการเชื่อมต่อถุงมือกลชิ้นนี้ออกจากบัญชีใช่หรือไม่?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, elevation: 0),
+            onPressed: () async {
+              Navigator.pop(context);
+              if (_deviceId != null) {
+                final success = await DeviceService.unbindDevice(_deviceId!);
+                if (success) {
+                  _fetchSettingsData();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('ยกเลิกการผูกอุปกรณ์เรียบร้อยแล้ว')),
+                  );
+                }
+              }
+            },
+            child: const Text('ยืนยัน', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
-    ),
-  );
-}
-
-// ⚠️ Dialog ยืนยันการปลดอุปกรณ์
-void _confirmUnbindDevice() {
-  showDialog(
-    context: context,
-    builder: (context) => AlertDialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Text('ยืนยันการยกเลิกการผูกอุปกรณ์'),
-      content: const Text('คุณต้องการยกเลิกการเชื่อมต่อถุงมือกลชิ้นนี้ออกจากบัญชีใช่หรือไม่?'),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, elevation: 0),
-          onPressed: () async {
-            Navigator.pop(context);
-            if (_deviceId != null) {
-              final success = await DeviceService.unbindDevice(_deviceId!);
-              if (success) {
-                _fetchSettingsData(); // 🔄 โหลดข้อมูลหน้าตั้งค่าใหม่ การ์ดจะกลับเป็น "ยังไม่ได้ผูกอุปกรณ์"
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('ยกเลิกการผูกอุปกรณ์เรียบร้อยแล้ว')),
-                );
-              }
-            }
-          },
-          child: const Text('ยืนยัน', style: TextStyle(color: Colors.white)),
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildProfileStatItem(String value, String label) {
     return Column(

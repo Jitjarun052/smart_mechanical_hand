@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../api/history_service.dart';
 import '../theme/app_theme.dart';
+import 'history_detail_page.dart'; // 👈 นำเข้า HistoryDetailPage
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
@@ -53,26 +53,34 @@ class _HistoryPageState extends State<HistoryPage> {
     }
   }
 
+  // 🛠️ แปลง String จาก DB เป็น DateTime ไทย (+7)
+  DateTime _parseToLocalDateTime(String? rawDate) {
+    if (rawDate == null || rawDate.isEmpty) return DateTime.now();
+    try {
+      String formattedRaw = rawDate.replaceAll(' ', 'T');
+      if (!formattedRaw.endsWith('Z') && !formattedRaw.contains('+')) {
+        formattedRaw += 'Z';
+      }
+      return DateTime.parse(formattedRaw).toLocal();
+    } catch (_) {
+      return DateTime.now();
+    }
+  }
+
   // 🧮 ฟังก์ชันคำนวณข้อมูลสถิติและกราฟตาม แท็บ, เดือน, และปี ที่เลือก
   Map<String, dynamic> _calculateStats() {
     final int targetYearBE = int.tryParse(_selectedYear.replaceAll('ปี: ', '')) ?? 2569;
-    final int targetYearAD = targetYearBE - 543; // แปลง พ.ศ. -> ค.ศ. (2569 -> 2026)
+    final int targetYearAD = targetYearBE - 543;
     final int targetMonth = _monthMap[_selectedMonth] ?? 1;
 
-    // 1. กรองข้อมูลเฉพาะปีที่เลือก (ค.ศ. 2026)
     final filteredByYear = _rawHistoryList.where((item) {
       if (item['created_at'] == null) return false;
-      try {
-        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
-        return dt.year == targetYearAD;
-      } catch (e) {
-        return false;
-      }
+      final DateTime dt = _parseToLocalDateTime(item['created_at'].toString());
+      return dt.year == targetYearAD;
     }).toList();
 
-    // 2. กรองข้อมูลเฉพาะเดือนที่เลือกจาก Dropdown (เช่น เดือน 2 หรือ 6)
     final filteredByMonth = filteredByYear.where((item) {
-      final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
+      final DateTime dt = _parseToLocalDateTime(item['created_at'].toString());
       return dt.month == targetMonth;
     }).toList();
 
@@ -85,7 +93,7 @@ class _HistoryPageState extends State<HistoryPage> {
     List<String> chartLabels = [];
 
     if (_selectedTab == 0) {
-      // 🟢 แท็บรายวัน: แสดงสถิติของเดือนที่เลือก ย่อยตามวันที่มีบันทึกจริง
+      // 🟢 แท็บรายวัน
       sessionCount = filteredByMonth.length;
       for (var item in filteredByMonth) {
         totalCount += (item['count'] as num? ?? 0).toInt();
@@ -98,13 +106,12 @@ class _HistoryPageState extends State<HistoryPage> {
       List<int> dayCounts = List.filled(7, 0);
 
       for (var item in filteredByMonth) {
-        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
-        int dayIdx = dt.weekday % 7; // 0 = อาทิตย์, 1 = จันทร์ ...
+        final DateTime dt = _parseToLocalDateTime(item['created_at'].toString());
+        int dayIdx = dt.weekday % 7;
         chartScores[dayIdx] += (item['accuracy'] as num? ?? 0).toDouble();
         dayCounts[dayIdx] += 1;
       }
 
-      // หาค่าเฉลี่ย % Accuracy ของแต่ละวัน
       for (int i = 0; i < 7; i++) {
         if (dayCounts[i] > 0) {
           chartScores[i] = chartScores[i] / dayCounts[i];
@@ -112,7 +119,7 @@ class _HistoryPageState extends State<HistoryPage> {
       }
 
     } else if (_selectedTab == 1) {
-      // 🔵 แท็บรายสัปดาห์: สรุป 5 สัปดาห์ของเดือนที่เลือก
+      // 🔵 แท็บรายสัปดาห์
       sessionCount = filteredByMonth.length;
       for (var item in filteredByMonth) {
         totalCount += (item['count'] as num? ?? 0).toInt();
@@ -125,7 +132,7 @@ class _HistoryPageState extends State<HistoryPage> {
       List<int> weekCounts = List.filled(5, 0);
 
       for (var item in filteredByMonth) {
-        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
+        final DateTime dt = _parseToLocalDateTime(item['created_at'].toString());
         int weekIdx = ((dt.day - 1) / 7).floor();
         if (weekIdx >= 5) weekIdx = 4;
 
@@ -136,7 +143,7 @@ class _HistoryPageState extends State<HistoryPage> {
       chartScores = List.generate(5, (i) => weekCounts[i] > 0 ? (weekSums[i] / weekCounts[i]) : 0.0);
 
     } else {
-      // 🟠 แท็บรายเดือน: รวมข้อมูลทั้ง 12 เดือนของปีที่เลือก
+      // 🟠 แท็บรายเดือน
       sessionCount = filteredByYear.length;
       for (var item in filteredByYear) {
         totalCount += (item['count'] as num? ?? 0).toInt();
@@ -149,7 +156,7 @@ class _HistoryPageState extends State<HistoryPage> {
       List<int> monthCounts = List.filled(12, 0);
 
       for (var item in filteredByYear) {
-        final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
+        final DateTime dt = _parseToLocalDateTime(item['created_at'].toString());
         int mIdx = dt.month - 1;
         if (mIdx >= 0 && mIdx < 12) {
           monthSums[mIdx] += (item['accuracy'] as num? ?? 0).toDouble();
@@ -268,7 +275,7 @@ class _HistoryPageState extends State<HistoryPage> {
                   ),
                   const SizedBox(height: 24),
 
-                  // แท็บเม็ดยาเปลี่ยนช่วงเวลา (รายวัน / รายสัปดาห์ / รายเดือน)
+                  // แท็บเม็ดยาเปลี่ยนช่วงเวลา
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
@@ -364,11 +371,47 @@ class _HistoryPageState extends State<HistoryPage> {
                   ),
                   const SizedBox(height: 28),
 
-                  // 📋 รายการบันทึกการฝึกซ้อมย้อนหลัง (เรียงจากล่าสุดขึ้นก่อน)
+                  // 📋 รายการบันทึกการฝึกซ้อมย้อนหลัง (ปรับสไตล์ Dashboard + กดข้ามไป HistoryDetailPage)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('บันทึกการฝึกซ้อม', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.history_toggle_off_rounded,
+                              color: AppTheme.primaryColor,
+                              size: 18,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          const Text(
+                            'บันทึกการฝึกซ้อม',
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_rawHistoryList.length}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey.shade700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                       IconButton(
                         icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
                         onPressed: _fetchHistoryData,
@@ -393,35 +436,140 @@ class _HistoryPageState extends State<HistoryPage> {
                           itemBuilder: (context, index) {
                             final item = _rawHistoryList[index];
                             final int count = item['count'] ?? 0;
-                            final int accuracy = item['accuracy'] ?? 0;
+                            final int accuracy = (item['accuracy'] as num? ?? 0).round();
                             final int duration = item['duration'] ?? 0;
-                            final String rawDate = item['created_at'] ?? '';
+                            final String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
 
-                            String formattedDate = 'ไม่ระบุวันที่';
-                            String formattedTime = '';
-
+                            String formattedDate = 'ฝึกซ้อมกายภาพ';
                             if (rawDate.isNotEmpty) {
                               try {
-                                final DateTime dt = DateTime.parse(rawDate).toLocal();
-                                formattedDate = DateFormat('d มี.ค. yyyy', 'th').format(dt);
-                                formattedTime = DateFormat('HH:mm น.').format(dt);
-                              } catch (_) {
-                                formattedDate = rawDate;
-                              }
+                                DateTime dt = _parseToLocalDateTime(rawDate);
+                                const monthsTH = ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                                formattedDate = 'รอบวันที่ ${dt.day} ${monthsTH[dt.month]}';
+                              } catch (_) {}
                             }
 
-                            return Card(
+                            return Container(
                               margin: const EdgeInsets.symmetric(vertical: 6),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.withOpacity(0.1))),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: AppTheme.backgroundColor,
-                                  child: const Icon(Icons.accessibility_new_rounded, color: AppTheme.primaryColor),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.03),
+                                    blurRadius: 10,
+                                    offset: const Offset(0, 4),
+                                  )
+                                ],
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                child: InkWell(
+                                  onTap: () {
+                                    // ⚡ กดการ์ดประวัติย่อยแล้วเปิดข้ามไปหน้า HistoryDetailPage สดๆ
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) => HistoryDetailPage(historyData: item),
+                                      ),
+                                    );
+                                  },
+                                  borderRadius: BorderRadius.circular(16),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                formattedDate,
+                                                style: const TextStyle(
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: AppTheme.textPrimary,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Row(
+                                                children: [
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                    decoration: const BoxDecoration(
+                                                      color: Color(0xFFFF9F43),
+                                                      borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
+                                                    ),
+                                                    child: Text(
+                                                      '$count ครั้ง',
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                    decoration: const BoxDecoration(
+                                                      color: Color(0xFFFFB976),
+                                                      borderRadius: BorderRadius.horizontal(right: Radius.circular(12)),
+                                                    ),
+                                                    child: Text(
+                                                      '$duration วินาที',
+                                                      style: const TextStyle(
+                                                        color: Colors.white,
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        Stack(
+                                          alignment: Alignment.center,
+                                          children: [
+                                            SizedBox(
+                                              width: 58,
+                                              height: 58,
+                                              child: CircularProgressIndicator(
+                                                value: accuracy / 100,
+                                                strokeWidth: 4.5,
+                                                backgroundColor: Colors.grey.shade200,
+                                                valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
+                                              ),
+                                            ),
+                                            Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  '$accuracy%',
+                                                  style: const TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w900,
+                                                    color: AppTheme.textPrimary,
+                                                  ),
+                                                ),
+                                                const Text(
+                                                  'แม่นยำ',
+                                                  style: TextStyle(
+                                                    fontSize: 8,
+                                                    color: AppTheme.textSecondary,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
-                                title: Text('$formattedDate $formattedTime', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                subtitle: Text('จำนวน: $count ครั้ง | เวลา: $duration วินาที', style: const TextStyle(fontSize: 12)),
-                                trailing: Text('$accuracy%', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
                               ),
                             );
                           },
