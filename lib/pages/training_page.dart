@@ -48,74 +48,85 @@ class _TrainingPageState extends State<TrainingPage> {
     super.dispose();
   }
 
-  // 📡 1. ดึงข้อมูลอุปกรณ์และสรุปประวัติจริงจาก Database
- Future<void> _fetchDeviceInfoAndSummary() async {
-  try {
-    // 1. ดึงข้อมูลอุปกรณ์
-    final deviceData = await DeviceService.getDeviceByUserId(widget.userId);
-    if (deviceData != null && mounted) {
-      setState(() {
-        _deviceName = deviceData['device_name'] ?? 'ถุงมืออัจฉริยะ Smart Glove';
-        _isConnected = true;
-        _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน';
-      });
-    }
-
-    // 2. ดึงประวัติการฝึก
-    final historyList = await HistoryService.getHistoryByUserId(widget.userId.toString());
-    
-    if (historyList.isNotEmpty && mounted) {
-      int totalDurationSec = 0;
-      double sumAccuracy = 0.0;
-
-      for (var item in historyList) {
-        totalDurationSec += (item['duration'] as num? ?? 0).toInt();
-        sumAccuracy += (item['accuracy'] as num? ?? 0).toDouble();
+  // 📡 1. ดึงข้อมูลอุปกรณ์และสรุปประวัติรวมจาก Database
+  Future<void> _fetchDeviceInfoAndSummary() async {
+    try {
+      final deviceData = await DeviceService.getDeviceByUserId(widget.userId);
+      if (deviceData != null && mounted) {
+        setState(() {
+          _deviceName = deviceData['device_name'] ?? 'ถุงมืออัจฉริยะ Smart Glove';
+          _isConnected = true;
+          _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน';
+        });
       }
 
-      // ⚡ หยิบรายการล่าสุด (เพราะ Backend เรียง ORDER BY created_at DESC ไว้แล้ว)
-      final latestSession = historyList.first;
-      int lastCount = (latestSession['count'] as num? ?? 0).toInt();
+      final historyList = await HistoryService.getHistoryByUserId(widget.userId.toString());
+      
+      if (historyList.isNotEmpty && mounted) {
+        int totalDurationSec = 0;
+        double sumAccuracy = 0.0;
+
+        for (var item in historyList) {
+          totalDurationSec += (item['duration'] as num? ?? 0).toInt();
+          sumAccuracy += (item['accuracy'] as num? ?? 0).toDouble();
+        }
+
+        setState(() {
+          _totalTrainingMin = (totalDurationSec / 60).round();
+          _accuracy = sumAccuracy / historyList.length;
+        });
+      }
+    } catch (e) {
+      debugPrint('Fetch Device Info Error: $e');
+    }
+  }
+
+  // 🔴 1. เมื่อกดปุ่ม "เริ่มต้น / หยุดการฝึกซ้อม" บนหน้าจอหลัก
+  Future<void> _toggleTraining() async {
+    if (_isTraining) {
+      // 🟢 สั่งพักเครื่องก่อนทันที เพื่อให้ลมหยุดเป่าขณะขึ้น Pop-up ถาม
+      try {
+        await DeviceService.sendControlCommand(widget.deviceId, 'PAUSE-APP');
+      } catch (_) {}
+
+      _showStopConfirmDialog();
+    } else {
+      // สั่งเริ่มฝึกใหม่ตั้งแต่รอบแรก
+      try {
+        await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
+      } catch (e) {
+        debugPrint('IoT Command Send Error: $e');
+      }
 
       setState(() {
-        _totalTrainingMin = (totalDurationSec / 60).round();
-        _accuracy = sumAccuracy / historyList.length;
-
-        // 🎯 กำหนดให้แสดงจำนวนรอบของเซสชันที่เพิ่งฝึกเสร็จ
-        if (!_isTraining) {
-          _flexCount = lastCount; 
-        }
+        _isTraining = true;
+        _startLocalTimer(resetTime: true); // ล้างเวลาเป็น 0 เมื่อเริ่มฝึกใหม่
       });
     }
-  } catch (e) {
-    debugPrint('Fetch Device Info Error: $e');
   }
-}
 
- // 📡 ซิงค์สถานะและจำนวนรอบจาก ESP32 แบบ Real-time
-// 📡 ซิงค์สถานะและจำนวนรอบจาก ESP32 แบบ Real-time
+  // 📡 ซิงค์สเตตัสเรียลไทม์กับ Backend
   void _startLiveSync() {
-    _liveTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+    _liveTimer = Timer.periodic(const Duration(milliseconds: 300), (timer) async {
       try {
-        final statusData = await DeviceService.getDeviceStatus(widget.deviceId); //[cite: 12]
+        final statusData = await DeviceService.getDeviceStatus(widget.deviceId);
         
         if (mounted && statusData != null) {
-          bool isIoTActive = statusData['is_training'] ?? false; //[cite: 12]
+          String statusStr = statusData['training_status']?.toString().toUpperCase() ?? '';
+          
+          // 🟢 เช็กให้ครอบคลุม: ถ้ารับมาเป็น "START-APP" หรือ "START-IOT" ให้ถือว่ากำลังฝึกซ้อม!
+          bool isIoTActive = statusStr.contains('START');
           int liveCountFromBackend = (statusData['live_count'] as num? ?? 0).toInt();
 
-          // 🔍 Print ดูค่า live_count ที่ดึงมาได้จริงจาก API
-          if (_isTraining) {
-            debugPrint('📡 Syncing Device ID [${widget.deviceId}] -> live_count: $liveCountFromBackend, is_training: $isIoTActive');
-          }
-
+          // 🟢 เมื่อสเตตัสใน DB เปลี่ยนแปลง (เช่น เปิดจากปุ่มภายนอก หรือกดจากแอป)
           if (isIoTActive != _isTraining) {
             setState(() {
               _isTraining = isIoTActive;
               if (_isTraining) {
-                _startLocalTimer(); //[cite: 12]
+                _startLocalTimer(resetTime: false); 
               } else {
-                _stopLocalTimer(); //[cite: 12]
-                _fetchDeviceInfoAndSummary(); //[cite: 12]
+                _stopLocalTimer();
+                _fetchDeviceInfoAndSummary(); // ดึงสรุปผล
               }
             });
           }
@@ -123,14 +134,11 @@ class _TrainingPageState extends State<TrainingPage> {
           setState(() {
             _isConnected = true;
             _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน';
-            
-            // 🟢 อัปเดต live_count ให้ UI เฉพาะตอนกำลังฝึก
             if (_isTraining) {
               _flexCount = liveCountFromBackend;
-              
               if (_flexCount >= _targetCount) {
                 _isTraining = false;
-                _showGoalReachedDialog(); //[cite: 12]
+                _showGoalReachedDialog();
               }
             }
           });
@@ -140,33 +148,12 @@ class _TrainingPageState extends State<TrainingPage> {
       }
     });
   }
-
-// 🟢 3. ปรับฟังก์ชันกดปุ่มเริ่ม/หยุด
-// 🔴 ฟังก์ชันเมื่อกดปุ่มเริ่ม / หยุดฝึกซ้อม
-  Future<void> _toggleTraining() async {
-    if (_isTraining) {
-      // ⚠️ ถ้ากำลังฝึกอยู่ ให้เด้ง Pop-up ถามยืนยันก่อนหยุดกลางคัน!
-      _showStopConfirmDialog();
-    } else {
-      // 🚀 ถ้ายังไม่ได้เริ่ม ให้สั่งเริ่มฝึกทันที
-      try {
-        await DeviceService.sendControlCommand(widget.deviceId, 'START');
-      } catch (e) {
-        debugPrint('IoT Command Send Error: $e');
-      }
-
-      setState(() {
-        _isTraining = true;
-        _flexCount = 0;
-        _startLocalTimer();
-      });
-    }
-  }
-
+  
   // ❓ Pop-up ถามยืนยันเมื่อกดหยุดฝึกซ้อมกลางคัน
   void _showStopConfirmDialog() {
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -182,10 +169,23 @@ class _TrainingPageState extends State<TrainingPage> {
             style: const TextStyle(fontSize: 14),
           ),
           actions: [
+            // 🟢 กรณีเลือก "ฝึกต่อ": ยิง START-APP เพื่อให้ ESP32 ลุยต่อจากรอบเดิม!
             TextButton(
-              onPressed: () => Navigator.pop(context), // ปิดหน้าต่างเพื่อฝึกต่อ
-              child: const Text('ฝึกต่อ', style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
+                } catch (_) {}
+                
+                setState(() {
+                  _isTraining = true;
+                  _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม ไม่ reset เป็น 0
+                });
+              },
+              child: const Text('ฝึกต่อ', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
             ),
+            
+            // 🔴 กรณีเลือก "หยุด & บันทึกผล": ยิง STOP-APP เพื่อบันทึก DB และล้างค่า
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.redAccent,
@@ -193,17 +193,19 @@ class _TrainingPageState extends State<TrainingPage> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: () async {
-                Navigator.pop(context); // ปิด Dialog
-                
-                // สั่งหยุดไปยัง ESP32
+                Navigator.pop(context);
                 try {
-                  await DeviceService.sendControlCommand(widget.deviceId, 'STOP');
-                } catch (_) {}
+                  await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
+                } catch (e) {
+                  debugPrint('Send STOP-APP Error: $e');
+                }
 
                 setState(() {
                   _isTraining = false;
+                  _flexCount = 0;      
+                  _secondsElapsed = 0; 
                   _stopLocalTimer();
-                  _fetchDeviceInfoAndSummary(); // ดึงสรุปประวัติล่าสุด
+                  _fetchDeviceInfoAndSummary();
                 });
               },
               child: const Text('หยุด & บันทึกผล', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -214,41 +216,17 @@ class _TrainingPageState extends State<TrainingPage> {
     );
   }
 
-  // 💾 3. บันทึกผลลง MySQL เมื่อฝึกเสร็จจริง
-  Future<void> _saveSessionToDatabase() async {
-    if (_flexCount == 0 && _secondsElapsed == 0) return;
-
-    try {
-      await HistoryService.addHistory({
-        'user_id': widget.userId,
-        'device_id': widget.deviceId,
-        'count': _flexCount,
-        'duration': _secondsElapsed,
-        'accuracy': _accuracy.round() > 0 ? _accuracy.round() : 85,
-      });
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('บันทึกผลการฝึกซ้อมลงระบบเรียบร้อยแล้ว 💾'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('Save History Error: $e');
+  // ⏱️ ยุบเหลือฟังก์ชันเดียว ควบคุมการ reset เวลาด้วย resetTime ( default = false )
+  void _startLocalTimer({bool resetTime = false}) {
+    if (resetTime) {
+      _secondsElapsed = 0; // ล้างเวลาเป็น 0 เมื่อสั่งเริ่มเซสชันใหม่จริงๆ
     }
-  }
-
- 
-
-  void _startLocalTimer() {
-    _secondsElapsed = 0;
+    
     _stopwatchTimer?.cancel();
     _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (!mounted) return;
       setState(() {
-        _secondsElapsed++; // นับเฉพาะเวลาที่ผ่านไป
+        _secondsElapsed++;
       });
     });
   }
@@ -263,10 +241,13 @@ class _TrainingPageState extends State<TrainingPage> {
     return "${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}";
   }
 
+  // 🏆 Pop-up เมื่อฝึกซ้อมครบตามเป้าหมาย (Goal Reached)
   void _showGoalReachedDialog() {
     _stopLocalTimer();
+    
+    // 🟢 สั่ง PAUSE-APP ไว้ชั่วคราว เพื่อหยุดลมระหว่างผู้ป่วยเลือกเมนู
     try {
-      DeviceService.sendControlCommand(widget.deviceId, 'STOP');
+      DeviceService.sendControlCommand(widget.deviceId, 'PAUSE-APP');
     } catch (_) {}
 
     showDialog(
@@ -297,6 +278,7 @@ class _TrainingPageState extends State<TrainingPage> {
               ),
               const SizedBox(height: 20),
               
+              // 🟢 1. ปุ่ม "เสร็จสิ้น & บันทึกผล"
               SizedBox(
                 width: double.infinity,
                 height: 46,
@@ -309,8 +291,19 @@ class _TrainingPageState extends State<TrainingPage> {
                   ),
                   onPressed: () async {
                     Navigator.pop(context);
-                    setState(() => _isTraining = false);
-                    await _saveSessionToDatabase();
+                    
+                    // 🚀 ยิงสั่ง STOP-APP ไปที่ Backend/ESP32 เพื่อบันทึก DB และล้างค่าเป็น 0
+                    try {
+                      await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
+                    } catch (e) {
+                      debugPrint('Send STOP-APP Goal Error: $e');
+                    }
+
+                    setState(() {
+                      _isTraining = false;
+                      _flexCount = 0; 
+                      _secondsElapsed = 0;
+                    });
                     _fetchDeviceInfoAndSummary();
                   },
                   icon: const Icon(Icons.check_circle_rounded),
@@ -319,6 +312,7 @@ class _TrainingPageState extends State<TrainingPage> {
               ),
               const SizedBox(height: 10),
 
+              // 🟢 2. ปุ่ม "พักผ่อน 1 นาที"
               SizedBox(
                 width: double.infinity,
                 height: 46,
@@ -338,20 +332,25 @@ class _TrainingPageState extends State<TrainingPage> {
               ),
               const SizedBox(height: 10),
 
+              // 🟢 3. ปุ่ม "ฝึกต่ออีก 5 ครั้ง (+5)"
               TextButton(
-                onPressed: () {
-                  Navigator.pop(context);
-                  setState(() {
-                    _targetCount += 5;
-                    _isTraining = true;
-                  });
-                  _startLocalTimer();
+                onPressed: () async {
+                  Navigator.pop(context); 
+                  
+                  // 🚀 ยิงสั่ง START-APP กลับไปเพื่อให้ ESP32 เริ่มเป่าลมต่อและนับรอบต่อจากเดิม
                   try {
-                    DeviceService.sendControlCommand(widget.deviceId, 'START');
+                    await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
                   } catch (_) {}
+
+                  setState(() {
+                    _targetCount += 5;   
+                    _isTraining = true;  
+                  });
+
+                  _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม
                 },
                 child: const Text('ฝึกต่ออีก 5 ครั้ง (+5)', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-              ),
+              )
             ],
           ),
         );
@@ -375,14 +374,19 @@ class _TrainingPageState extends State<TrainingPage> {
               } else {
                 t.cancel();
                 Navigator.pop(context);
+                
+                // 🟢 1. เมื่อพักผ่อนครบ 60 วินาที -> ยิงสั่ง START-APP เพื่อลุยต่ออีก 5 ครั้ง!
+                try {
+                  DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
+                } catch (e) {
+                  debugPrint('Send START-APP Rest complete Error: $e');
+                }
+
                 setState(() {
                   _targetCount += 5;
                   _isTraining = true;
                 });
-                _startLocalTimer();
-                try {
-                  DeviceService.sendControlCommand(widget.deviceId, 'START');
-                } catch (_) {}
+                _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม
               }
             });
 
@@ -418,11 +422,24 @@ class _TrainingPageState extends State<TrainingPage> {
                           elevation: 0,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
                         ),
+                        // 🔴 2. เมื่อกดปุ่ม "ข้ามพักผ่อน & พอแค่นี้" -> ยิงสั่ง STOP-APP จบการฝึกทันที!
                         onPressed: () async {
                           restTimer?.cancel();
                           Navigator.pop(context);
-                          setState(() => _isTraining = false);
-                          await _saveSessionToDatabase();
+                          
+                          try {
+                            // 🟢 ยิง STOP-APP เพื่อเซฟ DB และล้างค่าใน ESP32
+                            await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
+                          } catch (e) {
+                            debugPrint('Send STOP-APP Skip Rest Error: $e');
+                          }
+
+                          setState(() {
+                            _isTraining = false;
+                            _flexCount = 0;
+                            _secondsElapsed = 0;
+                          });
+                          _stopLocalTimer();
                           _fetchDeviceInfoAndSummary();
                         },
                         child: const Text('ข้ามพักผ่อน & พอแค่นี้', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -569,7 +586,6 @@ class _TrainingPageState extends State<TrainingPage> {
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
         child: Column(
           children: [
-            // 📡 1. แถบแสดงสถานะเชื่อมต่ออุปกรณ์
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
@@ -621,7 +637,6 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 24),
 
-            // 🦾 2. ส่วนแสดงไอคอนมือเปลี่ยนสีตามสถานะ _isTraining
             SizedBox(
               height: 180,
               child: Center(
@@ -657,7 +672,6 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 24),
 
-            // ⭕ 3. เกจวงกลม 3 วง
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -688,7 +702,6 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 28),
 
-            // 🟢 4. ปุ่มกดเริ่ม/หยุดฝึกซ้อม
             SizedBox(
               width: double.infinity,
               height: 56,
@@ -709,7 +722,6 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 24),
 
-            // 📊 5. Card สถิติขนาดใหญ่
             Row(
               children: [
                 Expanded(

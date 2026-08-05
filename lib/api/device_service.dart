@@ -73,27 +73,19 @@ class DeviceService {
   }
 
   static Future<bool> sendControlCommand(int deviceId, String command) async {
-  try {
-    final response = await http.post(
-      Uri.parse('${ApiConfig.baseUrl}/device/control/$deviceId'),
-      headers: ApiConfig.headers, // ต้องแนบ 'Content-Type': 'application/json'
-      body: jsonEncode({
-        'command': command, // ส่ง 'START' หรือ 'STOP'
-      }),
-    );
-
-    if (response.statusCode == 200) {
-      print('✅ ส่งคำสั่ง $command สำเร็จ: ${response.body}');
-      return true;
-    } else {
-      print('❌ ส่งคำสั่งไม่สำเร็จ HTTP Code: ${response.statusCode}');
+    try {
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/device/control/$deviceId'),
+        headers: ApiConfig.headers,
+        body: jsonEncode({
+          'command': command, // 🟢 ส่ง 'START-APP' หรือ 'STOP-APP'
+        }),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
       return false;
     }
-  } catch (e) {
-    print('❌ sendControlCommand Error: $e');
-    return false;
   }
-}
 
 // 📡 [เพิ่มใหม่] เช็กสเตตัสการทำงานและจำนวนรอบ Real-time จาก ESP32
 static Future<Map<String, dynamic>?> getDeviceStatus(int deviceId) async {

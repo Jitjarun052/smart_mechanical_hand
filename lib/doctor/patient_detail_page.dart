@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:intl/intl.dart';
 import '../theme/app_theme.dart';
 import '../api/history_service.dart';
 
@@ -14,6 +13,7 @@ class PatientDetailPage extends StatefulWidget {
 
 class _PatientDetailPageState extends State<PatientDetailPage> {
   int _selectedTab = 1; // 0 = รายวัน, 1 = รายสัปดาห์, 2 = รายเดือน
+  int _displayLimit = 10; // 🟢 จำนวนแสดงผลเริ่มต้น
   
   String _selectedFinger = 'นิ้วชี้';
   final List<String> _fingers = ['นิ้วโป้ง', 'นิ้วชี้', 'นิ้วกลาง', 'นิ้วนาง', 'นิ้วก้อย'];
@@ -54,7 +54,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
 
     if (mounted) {
       setState(() {
-        _patientHistoryList = data; // 🟢 ปลอดภัย ไม่ติด Type Error แล้ว!
+        _patientHistoryList = data;
         _isLoading = false;
       });
     }
@@ -77,8 +77,8 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       }
     }).toList();
 
-    // 2. กรองประวัติตามเดือน
-    final filteredByMonth = filteredByYear.where((item) {
+    // 2. กรองประวัติตามเดือน + 🟢 แปลง Type เป็น List<Map<String, dynamic>>
+    final List<Map<String, dynamic>> filteredByMonth = filteredByYear.where((item) {
       if (item['created_at'] == null) return false;
       try {
         final DateTime dt = DateTime.parse(item['created_at'].toString()).toLocal();
@@ -86,13 +86,16 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       } catch (_) {
         return false;
       }
-    }).toList();
+    }).map((item) => Map<String, dynamic>.from(item as Map)).toList();
 
     int totalCount = 0;
     int totalDurationSec = 0;
     double sumAccuracy = 0.0;
 
-    final targetList = (_selectedTab == 2) ? filteredByYear : filteredByMonth;
+    final targetList = (_selectedTab == 2) 
+        ? filteredByYear.map((item) => Map<String, dynamic>.from(item as Map)).toList() 
+        : filteredByMonth;
+        
     final int sessionCount = targetList.length;
 
     for (var item in targetList) {
@@ -114,7 +117,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   }
 
   // 📊 ดึงค่าองศาจากคอลัมน์นิ้วที่เลือกจาก Dropdown มาพลอตเป็นจุด FlSpot บนกราฟ
-  List<FlSpot> _generateChartSpots(List<dynamic> monthData) {
+  List<FlSpot> _generateChartSpots(List<Map<String, dynamic>> monthData) {
     if (monthData.isEmpty) {
       return [const FlSpot(1, 0), const FlSpot(2, 0), const FlSpot(3, 0), const FlSpot(4, 0)];
     }
@@ -124,11 +127,9 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     List<FlSpot> spots = [];
     for (int i = 0; i < monthData.length; i++) {
       final item = monthData[i];
-      if (item is Map<String, dynamic>) {
-        double angle = (item[targetColumn] as num? ?? item['wrist_angle'] as num? ?? item['accuracy'] as num? ?? 0).toDouble();
-        if (angle > 180) angle = 180;
-        spots.add(FlSpot((i + 1).toDouble(), angle));
-      }
+      double angle = (item[targetColumn] as num? ?? item['wrist_angle'] as num? ?? item['accuracy'] as num? ?? 0).toDouble();
+      if (angle > 180) angle = 180;
+      spots.add(FlSpot((i + 1).toDouble(), angle));
     }
 
     while (spots.length < 4) {
@@ -141,7 +142,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   @override
   Widget build(BuildContext context) {
     final currentStats = _calculateStats();
-    final List<Map<String, dynamic>> currentMonthLogs = currentStats['monthData'] ?? [];
+    final List<Map<String, dynamic>> currentMonthLogs = List<Map<String, dynamic>>.from(currentStats['monthData'] ?? []);
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
@@ -269,14 +270,20 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   ),
                   const SizedBox(height: 24),
 
-                  // 📋 5. รายการประวัติฝึกซ้อมย้อนหลัง (แสดงข้อมูล 5 นิ้ว)
+                  // 📋 5. รายการประวัติฝึกซ้อมย้อนหลัง
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('บันทึกการฝึกซ้อมรายเซสชัน', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                      Text(
+                        'บันทึกการฝึกซ้อมรายเซสชัน (${_patientHistoryList.length < _displayLimit ? _patientHistoryList.length : _displayLimit}/${_patientHistoryList.length})', 
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)
+                      ),
                       IconButton(
                         icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
-                        onPressed: _fetchPatientHistory,
+                        onPressed: () {
+                          setState(() => _displayLimit = 10); // รีเซ็ตการแสดงผลกลับมาเป็น 10 รายการเมื่อกด Refresh
+                          _fetchPatientHistory();
+                        },
                       )
                     ],
                   ),
@@ -289,82 +296,110 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
                           child: const Center(child: Text('คนไข้รายนี้ยังไม่มีประวัติการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))),
                         )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _patientHistoryList.length,
-                          itemBuilder: (context, index) {
-                            final item = _patientHistoryList.reversed.toList()[index];
-                            final int count = item['count'] ?? 0;
-                            final int duration = item['duration'] ?? 0;
-                            final num? wristAngle = item['wrist_angle'];
-                            final String rawDate = item['created_at'] ?? '';
+                      : Column(
+                          children: [
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _patientHistoryList.length < _displayLimit ? _patientHistoryList.length : _displayLimit,
+                              itemBuilder: (context, index) {
+                                final item = _patientHistoryList[index];
+                                final int count = item['count'] ?? 0;
+                                final int duration = item['duration'] ?? 0;
+                                final num? wristAngle = item['wrist_angle'];
+                                final String rawDate = item['created_at'] ?? '';
 
-                            // ดึงค่าองศาแยกนิ้ว
-                            final int fThumb = item['finger_thumb'] ?? 0;
-                            final int fIndex = item['finger_index'] ?? 0;
-                            final int fMiddle = item['finger_middle'] ?? 0;
-                            final int fRing = item['finger_ring'] ?? 0;
-                            final int fPinky = item['finger_pinky'] ?? 0;
+                                // ดึงค่าองศาแยกนิ้ว
+                                final int fThumb = item['finger_thumb'] ?? 0;
+                                final int fIndex = item['finger_index'] ?? 0;
+                                final int fMiddle = item['finger_middle'] ?? 0;
+                                final int fRing = item['finger_ring'] ?? 0;
+                                final int fPinky = item['finger_pinky'] ?? 0;
 
-                            String formattedDate = 'ไม่ระบุวันที่';
-                            String formattedTime = '';
+                                String formattedDate = 'ไม่ระบุวันที่';
+                                String formattedTime = '';
 
-                            if (rawDate.isNotEmpty) {
-                              try {
-                                // 1. แปลง String ให้เป็น DateTime ปลอดภัย
-                                final DateTime dt = DateTime.parse(rawDate.replaceAll('T', ' ')).toLocal();
-                                
-                                // 2. รายชื่อเดือนภาษาไทยแบบกำหนดเอง (ไม่ต้องพึ่ง Locale 'th')
-                                final List<String> thaiMonths = [
-                                  '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-                                  'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-                                ];
+                                if (rawDate.isNotEmpty) {
+                                  try {
+                                    final DateTime dt = DateTime.parse(rawDate.replaceAll('T', ' ')).toLocal();
+                                    
+                                    final List<String> thaiMonths = [
+                                      '', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+                                      'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+                                    ];
 
-                                final String day = dt.day.toString();
-                                final String month = thaiMonths[dt.month];
-                                final String yearBE = (dt.year + 543).toString(); // แปลงเป็น พ.ศ.
-                                final String hour = dt.hour.toString().padLeft(2, '0');
-                                final String minute = dt.minute.toString().padLeft(2, '0');
+                                    final String day = dt.day.toString();
+                                    final String month = thaiMonths[dt.month];
+                                    final String yearBE = (dt.year + 543).toString();
+                                    final String hour = dt.hour.toString().padLeft(2, '0');
+                                    final String minute = dt.minute.toString().padLeft(2, '0');
 
-                                formattedDate = '$day $month $yearBE';
-                                formattedTime = '$hour:$minute น.';
-                              } catch (e) {
-                                print('Date Parse Error: $e');
-                              }
-                            }
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 6),
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12), 
-                                side: BorderSide(color: Colors.grey.withOpacity(0.1))
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor: AppTheme.backgroundColor, 
-                                    child: const Icon(Icons.blur_on_rounded, color: AppTheme.primaryColor),
+                                    formattedDate = '$day $month $yearBE';
+                                    formattedTime = '$hour:$minute น.';
+                                  } catch (e) {
+                                    debugPrint('Date Parse Error: $e');
+                                  }
+                                }
+                                return Card(
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  elevation: 0,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12), 
+                                    side: BorderSide(color: Colors.grey.withOpacity(0.1))
                                   ),
-                                  title: Text('$formattedDate $formattedTime', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                                  subtitle: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const SizedBox(height: 4),
-                                      Text('จำนวน: $count ครั้ง | เวลา: $duration วินาที | ข้อมือ: ${wristAngle ?? 0}°', style: const TextStyle(fontSize: 12)),
-                                      const SizedBox(height: 4),
-                                      // 🖐️ สรุปองศา 5 นิ้วในแต่ละเซสชัน
-                                      Text(
-                                        'องศานิ้ว [โป้ง:$fThumb° | ชี้:$fIndex° | กลาง:$fMiddle° | นาง:$fRing° | ก้อย:$fPinky°]',
-                                        style: TextStyle(fontSize: 11, color: Colors.teal.shade700, fontWeight: FontWeight.bold),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                                    child: ListTile(
+                                      leading: CircleAvatar(
+                                        backgroundColor: AppTheme.backgroundColor, 
+                                        child: const Icon(Icons.blur_on_rounded, color: AppTheme.primaryColor),
                                       ),
-                                    ],
+                                      title: Text('$formattedDate $formattedTime', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      subtitle: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const SizedBox(height: 4),
+                                          Text('จำนวน: $count ครั้ง | เวลา: $duration วินาที | ข้อมือ: ${wristAngle ?? 0}°', style: const TextStyle(fontSize: 12)),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'องศานิ้ว [โป้ง:$fThumb° | ชี้:$fIndex° | กลาง:$fMiddle° | นาง:$fRing° | ก้อย:$fPinky°]',
+                                            style: TextStyle(fontSize: 11, color: Colors.teal.shade700, fontWeight: FontWeight.bold),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                            
+                            // 🟢 ปุ่ม "แสดงเพิ่มเติม (+10)" จะโชว์เฉพาะเมื่อยังมีรายการเหลือให้ดู
+                            if (_patientHistoryList.length > _displayLimit)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 12.0, bottom: 8.0),
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  height: 44,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTheme.primaryColor,
+                                      side: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _displayLimit += 10; // เพิ่มการแสดงผลทีละ 10 รายการ
+                                      });
+                                    },
+                                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                                    label: Text(
+                                      'แสดงประวัติเพิ่มเติม (เหลืออีก ${_patientHistoryList.length - _displayLimit} รายการ)',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
                                   ),
                                 ),
                               ),
-                            );
-                          },
+                          ],
                         ),
                 ],
               ),

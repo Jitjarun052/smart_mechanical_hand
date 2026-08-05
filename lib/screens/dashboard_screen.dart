@@ -11,7 +11,7 @@ import '../pages/quick_history_page.dart';
 import '../pages/contact_doctor_page.dart';
 import '../pages/device_setting_page.dart';
 import '../pages/notification_page.dart';
-import '../pages/history_detail_page.dart'; // 👈 นำเข้า HistoryDetailPage
+import '../pages/history_detail_page.dart';
 import '../api/api_config.dart';
 import '../widgets/notification/notification_badge_icon.dart';
 
@@ -60,32 +60,49 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Future<void> _fetchDashboardData() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
+
+    print('🔑 Current userToken in Dashboard: ${widget.userToken}');
 
     // 1. ดึงข้อมูล Profile ผู้ป่วย
     if (widget.userToken != null && widget.userToken!.isNotEmpty) {
       final userResult = await AuthService.getMe(widget.userToken!);
-      if (userResult['success'] == true) {
+      
+      print('📦 userResult from getMe: $userResult');
+
+      if (userResult['success'] == true && userResult['user'] != null) {
         final userData = userResult['user'];
-        final int? userId = userData['user_id'];
+        
+        // 🛡️ ดึง user_id แบบยืดหยุ่น (เผื่อเป็น int หรือ String หรือ num)
+        final dynamic rawUserId = userData['user_id'] ?? userData['id'];
+        final int? userId = rawUserId != null ? int.tryParse(rawUserId.toString()) : null;
+        
+        final String firstname = userData['firstname'] ?? userData['name'] ?? '';
+        final String lastname = userData['lastname'] ?? '';
         final String? imageName = userData['image'];
+
+        print('👤 Parsed User ID: $userId, Name: $firstname $lastname');
 
         if (mounted) {
           setState(() {
-            _userName = '${userData['firstname']} ${userData['lastname']}';
+            _userName = firstname.isNotEmpty ? '$firstname $lastname'.trim() : 'ผู้ป่วย';
             _userImage = ApiConfig.getImageUrl(imageName);
             _currentUserId = userId;
           });
         }
 
-        // 2. ⚡ ดึงข้อมูลอุปกรณ์และจำนวนการแจ้งเตือน
+        // 2. ⚡ ดึงข้อมูลอุปกรณ์และการแจ้งเตือน
         if (userId != null) {
           final deviceData = await DeviceService.getDeviceByUserId(userId);
           final notiList = await NotificationService.getNotifications(userId);
+          
           int unread = notiList.where((item) => (item['is_unread'] ?? 0) == 1).length;
+          
           if (mounted) {
             setState(() => _unreadNotiCount = unread);
           }
+
           if (deviceData != null && mounted) {
             setState(() {
               _deviceId = deviceData['device_id'];
@@ -95,13 +112,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
             });
           }
         }
+      } else {
+        print('❌ Failed to fetch user profile: ${userResult['message']}');
       }
+    } else {
+      print('⚠️ Token is null or empty in DashboardScreen!');
     }
 
     // 3. ดึงประวัติฝึก
     final historyData = await HistoryService.getHistoryList();
 
     if (mounted) {
+      historyData.sort((a, b) {
+        DateTime dateA = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(1970);
+        DateTime dateB = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(1970);
+        return dateB.compareTo(dateA);
+      });
+
       setState(() {
         _historyList = historyData;
         _isLoading = false;
@@ -207,9 +234,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       if (isDeviceActive) {
                         _showDeviceBottomSheet(context, _deviceName, _deviceSerialNumber);
                       } else {
+                        // 🛡️ เช็กว่ามี userId หรือยัง ถ้ายังไม่มาให้แจ้งเตือนและรีเฟรชข้อมูลก่อน
+                        if (_currentUserId == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('กำลังโหลดข้อมูลผู้ใช้ กรุณารอสักครู่แล้วลองใหม่อีกครั้ง'),
+                              backgroundColor: Colors.orange,
+                            ),
+                          );
+                          _fetchDashboardData(); // พยายามดึงข้อมูลใหม่อีกครั้ง
+                          return;
+                        }
+
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => DeviceSettingPage(userId: _currentUserId)),
+                          MaterialPageRoute(
+                            builder: (context) => DeviceSettingPage(userId: _currentUserId), // 👈 ส่ง userId ที่ผ่านการเช็กแล้ว
+                          ),
                         ).then((_) => _fetchDashboardData());
                       }
                     },
@@ -361,7 +402,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(height: 28),
 
-                  // 🏆 5. รายการประวัติแบบใหม่ (คลิกเปิดดู HistoryDetailPage)
+                  // 🏆 5. รายการประวัติแบบใหม่ (แสดง 5 รายการล่าสุด)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -430,6 +471,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               physics: const NeverScrollableScrollPhysics(),
                               itemCount: _historyList.length > 5 ? 5 : _historyList.length,
                               itemBuilder: (context, index) {
+                                // 🟢 ดึงตามลำดับ Index (เพราะจัดเรียง DESC ใน _fetchDashboardData แล้ว)
                                 final item = _historyList[index];
                                 final int count = item['count'] ?? 0;
                                 final int accuracy = (item['accuracy'] as num? ?? 0).round();
@@ -462,7 +504,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     color: Colors.transparent,
                                     child: InkWell(
                                       onTap: () {
-                                        // ⚡ กดการ์ดประวัติย่อยแล้วเปิดข้ามไปหน้า HistoryDetailPage สดๆ
                                         Navigator.push(
                                           context,
                                           MaterialPageRoute(
@@ -533,7 +574,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                   width: 58,
                                                   height: 58,
                                                   child: CircularProgressIndicator(
-                                                    value: accuracy / 100,
+                                                    value: (accuracy / 100).clamp(0.0, 1.0),
                                                     strokeWidth: 4.5,
                                                     backgroundColor: Colors.grey.shade200,
                                                     valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),

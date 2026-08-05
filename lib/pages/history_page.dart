@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../api/history_service.dart';
 import '../theme/app_theme.dart';
-import 'history_detail_page.dart'; // 👈 นำเข้า HistoryDetailPage
+import 'history_detail_page.dart';
 
 class HistoryPage extends StatefulWidget {
   const HistoryPage({super.key});
@@ -12,6 +12,7 @@ class HistoryPage extends StatefulWidget {
 
 class _HistoryPageState extends State<HistoryPage> {
   int _selectedTab = 1; // 0 = รายวัน, 1 = รายสัปดาห์, 2 = รายเดือน
+  int _displayLimit = 10; // 🟢 จำนวนแสดงผลประวัติเริ่มต้น 10 รายการ
 
   String _selectedYear = 'ปี: 2569';
   String _selectedMonth = 'เดือน: ม.ค.';
@@ -46,6 +47,13 @@ class _HistoryPageState extends State<HistoryPage> {
     setState(() => _isLoading = true);
     final data = await HistoryService.getHistoryList();
     if (mounted) {
+      // 🟢 จัดเรียงให้เซสชันล่าสุดขึ้นมาเป็น Index 0 เสมอ
+      data.sort((a, b) {
+        DateTime dateA = _parseToLocalDateTime(a['created_at']?.toString());
+        DateTime dateB = _parseToLocalDateTime(b['created_at']?.toString());
+        return dateB.compareTo(dateA);
+      });
+
       setState(() {
         _rawHistoryList = data;
         _isLoading = false;
@@ -371,7 +379,7 @@ class _HistoryPageState extends State<HistoryPage> {
                   ),
                   const SizedBox(height: 28),
 
-                  // 📋 รายการบันทึกการฝึกซ้อมย้อนหลัง (ปรับสไตล์ Dashboard + กดข้ามไป HistoryDetailPage)
+                  // 📋 รายการบันทึกการฝึกซ้อมย้อนหลัง (เรียงล่าสุดอยู่อันแรก + แสดง 10 รายการแรก)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -390,31 +398,18 @@ class _HistoryPageState extends State<HistoryPage> {
                             ),
                           ),
                           const SizedBox(width: 10),
-                          const Text(
-                            'บันทึกการฝึกซ้อม',
-                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.grey.shade200,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Text(
-                              '${_rawHistoryList.length}',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey.shade700,
-                              ),
-                            ),
+                          Text(
+                            'บันทึกการฝึกซ้อม (${_rawHistoryList.length < _displayLimit ? _rawHistoryList.length : _displayLimit}/${_rawHistoryList.length})',
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
                           ),
                         ],
                       ),
                       IconButton(
                         icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
-                        onPressed: _fetchHistoryData,
+                        onPressed: () {
+                          setState(() => _displayLimit = 10); // 🟢 รีเซ็ต limit เป็น 10 รายการเมื่อ refresh
+                          _fetchHistoryData();
+                        },
                       )
                     ],
                   ),
@@ -429,150 +424,181 @@ class _HistoryPageState extends State<HistoryPage> {
                             child: Text('ยังไม่มีบันทึกการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
                           ),
                         )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _rawHistoryList.length,
-                          itemBuilder: (context, index) {
-                            final item = _rawHistoryList[index];
-                            final int count = item['count'] ?? 0;
-                            final int accuracy = (item['accuracy'] as num? ?? 0).round();
-                            final int duration = item['duration'] ?? 0;
-                            final String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
+                      : Column(
+                          children: [
+                            ListView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _rawHistoryList.length < _displayLimit ? _rawHistoryList.length : _displayLimit,
+                              itemBuilder: (context, index) {
+                                // 🟢 ดึงข้อมูลตาม Index (เพราะถูกจัดเรียง DESC แล้วใน _fetchHistoryData)
+                                final item = _rawHistoryList[index];
+                                final int count = item['count'] ?? 0;
+                                final int accuracy = (item['accuracy'] as num? ?? 0).round();
+                                final int duration = item['duration'] ?? 0;
+                                final String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
 
-                            String formattedDate = 'ฝึกซ้อมกายภาพ';
-                            if (rawDate.isNotEmpty) {
-                              try {
-                                DateTime dt = _parseToLocalDateTime(rawDate);
-                                const monthsTH = ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
-                                formattedDate = 'รอบวันที่ ${dt.day} ${monthsTH[dt.month]}';
-                              } catch (_) {}
-                            }
+                                String formattedDate = 'ฝึกซ้อมกายภาพ';
+                                if (rawDate.isNotEmpty) {
+                                  try {
+                                    DateTime dt = _parseToLocalDateTime(rawDate);
+                                    const monthsTH = ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+                                    formattedDate = 'รอบวันที่ ${dt.day} ${monthsTH[dt.month]}';
+                                  } catch (_) {}
+                                }
 
-                            return Container(
-                              margin: const EdgeInsets.symmetric(vertical: 6),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(16),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.03),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  )
-                                ],
-                              ),
-                              child: Material(
-                                color: Colors.transparent,
-                                child: InkWell(
-                                  onTap: () {
-                                    // ⚡ กดการ์ดประวัติย่อยแล้วเปิดข้ามไปหน้า HistoryDetailPage สดๆ
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (context) => HistoryDetailPage(historyData: item),
-                                      ),
-                                    );
-                                  },
-                                  borderRadius: BorderRadius.circular(16),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                formattedDate,
-                                                style: const TextStyle(
-                                                  fontSize: 15,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: AppTheme.textPrimary,
-                                                ),
-                                              ),
-                                              const SizedBox(height: 10),
-                                              Row(
+                                return Container(
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withOpacity(0.03),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4),
+                                      )
+                                    ],
+                                  ),
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      onTap: () {
+                                        Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (context) => HistoryDetailPage(historyData: item),
+                                          ),
+                                        );
+                                      },
+                                      borderRadius: BorderRadius.circular(16),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(16.0),
+                                        child: Row(
+                                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                          children: [
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
-                                                  Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                                    decoration: const BoxDecoration(
-                                                      color: Color(0xFFFF9F43),
-                                                      borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
-                                                    ),
-                                                    child: Text(
-                                                      '$count ครั้ง',
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 11,
-                                                        fontWeight: FontWeight.bold,
-                                                      ),
+                                                  Text(
+                                                    formattedDate,
+                                                    style: const TextStyle(
+                                                      fontSize: 15,
+                                                      fontWeight: FontWeight.bold,
+                                                      color: AppTheme.textPrimary,
                                                     ),
                                                   ),
-                                                  Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                                    decoration: const BoxDecoration(
-                                                      color: Color(0xFFFFB976),
-                                                      borderRadius: BorderRadius.horizontal(right: Radius.circular(12)),
-                                                    ),
-                                                    child: Text(
-                                                      '$duration วินาที',
-                                                      style: const TextStyle(
-                                                        color: Colors.white,
-                                                        fontSize: 11,
-                                                        fontWeight: FontWeight.bold,
+                                                  const SizedBox(height: 10),
+                                                  Row(
+                                                    children: [
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                        decoration: const BoxDecoration(
+                                                          color: Color(0xFFFF9F43),
+                                                          borderRadius: BorderRadius.horizontal(left: Radius.circular(12)),
+                                                        ),
+                                                        child: Text(
+                                                          '$count ครั้ง',
+                                                          style: const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.bold,
+                                                          ),
+                                                        ),
                                                       ),
-                                                    ),
+                                                      Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                                        decoration: const BoxDecoration(
+                                                          color: Color(0xFFFFB976),
+                                                          borderRadius: BorderRadius.horizontal(right: Radius.circular(12)),
+                                                        ),
+                                                        child: Text(
+                                                          '$duration วินาที',
+                                                          style: const TextStyle(
+                                                            color: Colors.white,
+                                                            fontSize: 11,
+                                                            fontWeight: FontWeight.bold,
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
                                                 ],
                                               ),
-                                            ],
-                                          ),
-                                        ),
-                                        Stack(
-                                          alignment: Alignment.center,
-                                          children: [
-                                            SizedBox(
-                                              width: 58,
-                                              height: 58,
-                                              child: CircularProgressIndicator(
-                                                value: accuracy / 100,
-                                                strokeWidth: 4.5,
-                                                backgroundColor: Colors.grey.shade200,
-                                                valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
-                                              ),
                                             ),
-                                            Column(
-                                              mainAxisSize: MainAxisSize.min,
+                                            Stack(
+                                              alignment: Alignment.center,
                                               children: [
-                                                Text(
-                                                  '$accuracy%',
-                                                  style: const TextStyle(
-                                                    fontSize: 13,
-                                                    fontWeight: FontWeight.w900,
-                                                    color: AppTheme.textPrimary,
+                                                SizedBox(
+                                                  width: 58,
+                                                  height: 58,
+                                                  child: CircularProgressIndicator(
+                                                    value: (accuracy / 100).clamp(0.0, 1.0),
+                                                    strokeWidth: 4.5,
+                                                    backgroundColor: Colors.grey.shade200,
+                                                    valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primaryColor),
                                                   ),
                                                 ),
-                                                const Text(
-                                                  'แม่นยำ',
-                                                  style: TextStyle(
-                                                    fontSize: 8,
-                                                    color: AppTheme.textSecondary,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
+                                                Column(
+                                                  mainAxisSize: MainAxisSize.min,
+                                                  children: [
+                                                    Text(
+                                                      '$accuracy%',
+                                                      style: const TextStyle(
+                                                        fontSize: 13,
+                                                        fontWeight: FontWeight.w900,
+                                                        color: AppTheme.textPrimary,
+                                                      ),
+                                                    ),
+                                                    const Text(
+                                                      'แม่นยำ',
+                                                      style: TextStyle(
+                                                        fontSize: 8,
+                                                        color: AppTheme.textSecondary,
+                                                        fontWeight: FontWeight.bold,
+                                                      ),
+                                                    ),
+                                                  ],
                                                 ),
                                               ],
                                             ),
                                           ],
                                         ),
-                                      ],
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+
+                            // 🟢 ปุ่ม "แสดงประวัติเพิ่มเติม (+10)"
+                            if (_rawHistoryList.length > _displayLimit)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 12.0, bottom: 8.0),
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  height: 44,
+                                  child: OutlinedButton.icon(
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: AppTheme.primaryColor,
+                                      side: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
+                                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                                    ),
+                                    onPressed: () {
+                                      setState(() {
+                                        _displayLimit += 10; // เพิ่มรายการที่แสดงผลทีละ 10
+                                      });
+                                    },
+                                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                                    label: Text(
+                                      'แสดงประวัติเพิ่มเติม (เหลืออีก ${_rawHistoryList.length - _displayLimit} รายการ)',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                                     ),
                                   ),
                                 ),
                               ),
-                            );
-                          },
+                          ],
                         ),
                 ],
               ),

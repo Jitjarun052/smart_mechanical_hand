@@ -1,14 +1,16 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../theme/app_theme.dart';
-import '../../screens/scan_screen.dart';
-import '../../api/device_service.dart'; // 👈 นำเข้า DeviceService
+import '../../api/device_service.dart';
 
 class Step3DeviceForm extends StatelessWidget {
   final GlobalKey<FormState> formKey;
   final TextEditingController serialNumberController;
   final TextEditingController deviceNameController;
   final bool isSubmitting;
-  final Function(Map<String, dynamic> deviceData) onSubmitWithDevice; // 👈 ส่งข้อมูลอุปกรณ์ที่ผูกสำเร็จกลับไป
+  final Function(Map<String, dynamic> deviceData) onSubmitWithDevice;
   final VoidCallback onSkip;
   final VoidCallback onPrev;
 
@@ -23,7 +25,139 @@ class Step3DeviceForm extends StatelessWidget {
     required this.onPrev,
   });
 
-  // 📱 ฟังก์ชันแสดง Modal แจ้งเตือนข้อผิดพลาด/คำแนะนำ
+  // 📷 1. ฟังก์ชันเปิดกล้องสแกน QR Code แบบ Modal
+  void _openCameraScanner(BuildContext context) {
+    final MobileScannerController scannerController = MobileScannerController();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.black,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.7,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'สแกน QR Code ถุงมือกล',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () {
+                      scannerController.dispose();
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      MobileScanner(
+                        controller: scannerController,
+                        onDetect: (capture) {
+                          final List<Barcode> barcodes = capture.barcodes;
+                          for (final barcode in barcodes) {
+                            if (barcode.rawValue != null && barcode.rawValue!.isNotEmpty) {
+                              serialNumberController.text = barcode.rawValue!;
+                              scannerController.dispose();
+                              Navigator.pop(ctx);
+
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('สแกนสำเร็จ: ${barcode.rawValue}'),
+                                  backgroundColor: Colors.green,
+                                ),
+                              );
+                              break;
+                            }
+                          }
+                        },
+                      ),
+                      Container(
+                        width: 220,
+                        height: 220,
+                        decoration: BoxDecoration(
+                          border: Border.all(color: AppTheme.primaryColor, width: 3),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'ส่องกล้องไปที่ QR Code บนตัวเครื่องถุงมือกล',
+                style: TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // 🖼️ 2. ฟังก์ชันเลือกรูปภาพจาก Gallery แล้วอ่านค่า QR Code
+  Future<void> _pickImageAndScan(BuildContext context) async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+
+      if (image == null) return;
+
+      if (kIsWeb) {
+        if (context.mounted) {
+          _showErrorModal(
+            context,
+            'ไม่รองรับบนเว็บ',
+            'ฟังก์ชันสแกนจากรูปภาพรองรับเฉพาะบนแอปพลิเคชันมือถือ (Android/iOS) เท่านั้น กรุณาใช้ปุ่ม "เปิดกล้องสแกน" แทนครับ',
+          );
+        }
+        return;
+      }
+      
+      final MobileScannerController controller = MobileScannerController();
+      final BarcodeCapture? capture = await controller.analyzeImage(image.path);
+      controller.dispose();
+
+      if (capture != null && capture.barcodes.isNotEmpty) {
+        final String? code = capture.barcodes.first.rawValue;
+        if (code != null && code.isNotEmpty) {
+          serialNumberController.text = code;
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('อ่านค่า QR Code สำเร็จ: $code'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+        } else {
+          if (context.mounted) _showErrorModal(context, 'อ่านค่าไม่สำเร็จ', 'ไม่พบข้อมูล QR Code ในรูปภาพนี้');
+        }
+      } else {
+        if (context.mounted) _showErrorModal(context, 'ไม่พบ QR Code', 'รูปภาพที่เลือกไม่มี QR Code หรือรูปไม่ชัดเจน');
+      }
+    } catch (e) {
+      if (context.mounted) _showErrorModal(context, 'เกิดข้อผิดพลาด', 'ไม่สามารถอ่านไฟล์รูปภาพได้: $e');
+    }
+  }
+
+  // 📱 ฟังก์ชันแสดง Modal แจ้งเตือน
   void _showErrorModal(BuildContext context, String title, String message) {
     showDialog(
       context: context,
@@ -53,7 +187,7 @@ class Step3DeviceForm extends StatelessWidget {
               elevation: 0,
             ),
             onPressed: () => Navigator.pop(context),
-            child: const Text('ลองใหม่อีกครั้ง', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text('ตกลง', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -67,24 +201,20 @@ class Step3DeviceForm extends StatelessWidget {
     final serial = serialNumberController.text.trim();
     final name = deviceNameController.text.trim();
 
-    // Show loading
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (_) => const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor)),
     );
 
-    // 📡 ยิง API ไปเช็ก Serial Number ในตาราง device ว่ามีจริงไหม และว่างอยู่หรือไม่
-    // (หมายเหตุ: ใช้ temp userId = 0 เพื่อตรวจสอบการถือครองก่อน)
     final checkResult = await DeviceService.bindDevice(
       serialNumber: serial,
-      userId: 0, // หรือสร้าง API เช็กแยกเฉพาะ /device/check-serial
+      userId: 0,
       deviceName: name,
     );
 
-    if (context.mounted) Navigator.pop(context); // ปิด Loading Indicator
+    if (context.mounted) Navigator.pop(context);
 
-    // ❌ กรณีไม่พบอุปกรณ์ หรือ ถูกผู้อื่นใช้งานไปแล้ว
     if (checkResult['success'] == false) {
       if (context.mounted) {
         _showErrorModal(
@@ -94,7 +224,6 @@ class Step3DeviceForm extends StatelessWidget {
         );
       }
     } else {
-      // ✅ ผ่าน! อุปกรณ์มีจริงและพร้อมใช้งาน -> ส่งข้อมูลไปยัง callback เพื่อสมัครสมาชิกต่อ
       onSubmitWithDevice({
         'serial_number': serial,
         'device_name': name,
@@ -113,27 +242,66 @@ class Step3DeviceForm extends StatelessWidget {
           children: [
             const Text('ผูกอุปกรณ์มือกล 🦾', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
             const SizedBox(height: 4),
-            const Text('ขั้นตอนที่ 3: ระบุหมายเลขเครื่องมือกลเพื่อซิงก์ข้อมูลแนวโน้ม', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
-            const SizedBox(height: 28),
+            const Text('ขั้นตอนที่ 3: ระบุหมายเลขเครื่องมือกล หรือสแกน QR Code', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            const SizedBox(height: 24),
+
+            // 📸 ปุ่มเปิดกล้องสแกน & ปุ่มเลือกรูปจากอัลบั้ม
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _openCameraScanner(context),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primaryColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.3)),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.qr_code_scanner_rounded, color: AppTheme.primaryColor, size: 20),
+                          SizedBox(width: 8),
+                          Text('เปิดกล้องสแกน', style: TextStyle(color: AppTheme.primaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _pickImageAndScan(context),
+                    borderRadius: BorderRadius.circular(16),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.photo_library_rounded, color: AppTheme.textSecondary, size: 20),
+                          SizedBox(width: 8),
+                          Text('เลือกรูปภาพ', style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 13)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
 
             _buildInputLabel('หมายเลขซีเรียลนัมเบอร์อุปกรณ์ (Serial Number)'),
             TextFormField(
               controller: serialNumberController,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-              decoration: _buildDecoration('เช่น Glove-2569-XXXX', Icons.developer_board_rounded).copyWith(
-                suffixIcon: IconButton(
-                  icon: const Icon(Icons.qr_code_scanner_rounded, color: AppTheme.primaryColor, size: 22),
-                  onPressed: () async {
-                    final String? scanned = await Navigator.push<String>(
-                      context,
-                      MaterialPageRoute(builder: (_) => const ScanScreen()),
-                    );
-                    if (scanned != null) {
-                      serialNumberController.text = scanned;
-                    }
-                  },
-                ),
-              ),
+              decoration: _buildDecoration('เช่น Glove-2569-XXXX หรือสแกนด้านบน', Icons.developer_board_rounded),
               validator: (v) => v == null || v.trim().isEmpty ? 'กรุณาระบุ Serial Number' : null,
             ),
             const SizedBox(height: 20),
@@ -169,7 +337,7 @@ class Step3DeviceForm extends StatelessWidget {
                       style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
                       onPressed: isSubmitting
                           ? null
-                          : () => _handleDeviceValidation(context), // 👈 เรียกฟังก์ชันตรวจเช็ก Serial Number ก่อนส่งผ่าน
+                          : () => _handleDeviceValidation(context),
                       child: isSubmitting
                           ? const CircularProgressIndicator(color: Colors.white)
                           : const Text('ยืนยันลงทะเบียน', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
@@ -180,10 +348,9 @@ class Step3DeviceForm extends StatelessWidget {
             ),
             const SizedBox(height: 24),
             
-            // ⏩ ปุ่มข้ามขั้นตอน
             Center(
               child: TextButton(
-                onPressed: isSubmitting ? null : onSkip, // 👈 กดข้ามได้ทันทีโดยไม่เช็กช่องอินพุต
+                onPressed: isSubmitting ? null : onSkip,
                 child: const Text('ข้ามขั้นตอนผูกอุปกรณ์ไปก่อน', style: TextStyle(color: AppTheme.textSecondary, fontWeight: FontWeight.bold, decoration: TextDecoration.underline)),
               ),
             ),

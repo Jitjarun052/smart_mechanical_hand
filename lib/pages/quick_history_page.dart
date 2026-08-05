@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../api/history_service.dart';
 import '../theme/app_theme.dart';
-import 'history_detail_page.dart'; // 👈 นำเข้า HistoryDetailPage
+import 'history_detail_page.dart';
 
 class QuickHistoryPage extends StatefulWidget {
   const QuickHistoryPage({super.key});
@@ -13,6 +13,7 @@ class QuickHistoryPage extends StatefulWidget {
 
 class _QuickHistoryPageState extends State<QuickHistoryPage> {
   bool _isLoading = true;
+  int _displayLimit = 10; // 🟢 จำนวนการแสดงผลรายการย้อนหลังเริ่มต้น 10 รายการ
   List<Map<String, dynamic>> _historyData = [];
 
   // 🎨 รายการแถบสีสำหรับสุ่ม/วนใช้ตกแต่งด้านซ้ายของแต่ละ Card
@@ -30,14 +31,21 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     _fetchHistoryData();
   }
 
-  // 📡 ฟังก์ชันดึงประวัติการฝึกจริงจาก Backend (ตาราง history)
+
+  // 📡 ฟังก์ชันดึงประวัติการฝึกจริงจาก Backend
   Future<void> _fetchHistoryData() async {
     setState(() => _isLoading = true);
 
-    // ดึงข้อมูลผ่าน HistoryService ที่เราสร้างไว้
     final data = await HistoryService.getHistoryList();
 
     if (mounted) {
+      // 🟢 Sort ข้อมูลด้วย created_at หรือ history_id ให้ล่าสุดขึ้นก่อนเสมอ!
+      data.sort((a, b) {
+        DateTime dateA = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(1970);
+        DateTime dateB = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(1970);
+        return dateB.compareTo(dateA); // เรียงจาก มาก -> น้อย (ล่าสุด -> เก่าสุด)
+      });
+
       setState(() {
         _historyData = data;
         _isLoading = false;
@@ -78,9 +86,11 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
-        title: const Text(
-          'ประวัติย้อนหลัง',
-          style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold),
+        title: Text(
+          _historyData.isEmpty 
+              ? 'ประวัติย้อนหลัง' 
+              : 'ประวัติย้อนหลัง (${_historyData.length < _displayLimit ? _historyData.length : _displayLimit}/${_historyData.length})',
+          style: const TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 18),
         ),
         backgroundColor: AppTheme.backgroundColor,
         elevation: 0,
@@ -88,7 +98,10 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            onPressed: _fetchHistoryData,
+            onPressed: () {
+              setState(() => _displayLimit = 10); // 🟢 รีเซ็ตกลับเป็น 10 รายการแรกเมื่อกด Refresh
+              _fetchHistoryData();
+            },
           ),
         ],
       ),
@@ -99,20 +112,63 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
           : _historyData.isEmpty
               ? _buildEmptyState()
               : RefreshIndicator(
-                  onRefresh: _fetchHistoryData,
+                  onRefresh: () async {
+                    setState(() => _displayLimit = 10);
+                    await _fetchHistoryData();
+                  },
                   color: AppTheme.primaryColor,
                   child: ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 12.0),
-                    itemCount: _historyData.length,
+                    // 🟢 คำนวณจำนวนไอเทม: +1 สำหรับการ์ดการฝึกล่าสุดบนสุด +1 สำหรับปุ่มดูเพิ่มเติมด้านล่างสุด
+                    itemCount: 1 + 
+                               (_historyData.length < _displayLimit ? _historyData.length : _displayLimit) + 
+                               (_historyData.length > _displayLimit ? 1 : 0),
                     itemBuilder: (context, index) {
-                      final item = _historyData[index];
+                      // 🟢 1. แสดงการ์ดไฮไลต์ "การฝึกล่าสุด (Index 0)" ไว้ที่ส่วนหัวสุด
+                      if (index == 0) {
+                        return _buildLatestSessionCard(_historyData[0]);
+                      }
+
+                      // คำนวณ index จริงใน List ข้อมูล (หักออก 1 เพราะตำแหน่ง 0 ถูกใช้โดยการ์ดล่าสุด)
+                      final listIndex = index - 1;
+
+                      // 🟢 2. แสดงปุ่ม "แสดงประวัติเพิ่มเติม (+10)" ที่ท้ายสุด
+                      if (listIndex == (_historyData.length < _displayLimit ? _historyData.length : _displayLimit)) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 8.0, bottom: 20.0),
+                          child: SizedBox(
+                            width: double.infinity,
+                            height: 44,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppTheme.primaryColor,
+                                side: const BorderSide(color: AppTheme.primaryColor, width: 1.5),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+                              ),
+                              onPressed: () {
+                                setState(() {
+                                  _displayLimit += 10; // 🟢 เพิ่มการแสดงผลทีละ 10 รายการ
+                                });
+                              },
+                              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                              label: Text(
+                                'แสดงประวัติเพิ่มเติม (เหลืออีก ${_historyData.length - _displayLimit} รายการ)',
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                            ),
+                          ),
+                        );
+                      }
+
+                      // 🟢 3. รายการประวัติย้อนหลังแต่ละเซสชัน
+                      final item = _historyData[listIndex];
 
                       final count = '${item['count'] ?? 0} ครั้ง';
                       final duration = '${item['duration'] ?? 0} วินาที';
                       final accuracy = '${item['accuracy'] ?? 0}%';
                       final dateStr = _formatDate(item['created_at'] ?? item['train_date']);
 
-                      final indicatorColor = _accentColors[index % _accentColors.length];
+                      final indicatorColor = _accentColors[listIndex % _accentColors.length];
 
                       return Container(
                         margin: const EdgeInsets.symmetric(vertical: 8.0),
@@ -145,14 +201,14 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
                               child: IntrinsicHeight(
                                 child: Row(
                                   children: [
-                                    // 🎨 1. แถบสีตกแต่งด้านซ้าย
+                                    // 🎨 แถบสีตกแต่งด้านซ้าย
                                     Container(
                                       width: 5,
                                       color: indicatorColor,
                                     ),
                                     const SizedBox(width: 16),
 
-                                    // 📝 2. ส่วนเนื้อหาข้อมูลหลัก
+                                    // 📝 ส่วนเนื้อหาข้อมูลหลัก
                                     Expanded(
                                       child: Padding(
                                         padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
@@ -198,6 +254,105 @@ class _QuickHistoryPageState extends State<QuickHistoryPage> {
                     },
                   ),
                 ),
+    );
+  }
+
+  // 💥 Widget การ์ดแสดงผลการฝึกล่าสุด ( Latest Training Session Card )
+  Widget _buildLatestSessionCard(Map<String, dynamic> latestItem) {
+    final count = latestItem['count'] ?? 0;
+    final duration = latestItem['duration'] ?? 0;
+    final accuracy = (latestItem['accuracy'] as num? ?? 0).round();
+    final dateStr = _formatDate(latestItem['created_at'] ?? latestItem['train_date']);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16.0, top: 4.0),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF10AC84), Color(0xFF1DD1A1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF10AC84).withOpacity(0.3),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => HistoryDetailPage(historyData: latestItem),
+              ),
+            );
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: const [
+                        Icon(Icons.stars_rounded, color: Colors.amberAccent, size: 20),
+                        SizedBox(width: 6),
+                        Text(
+                          'การฝึกล่าสุดของคุณ',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ],
+                    ),
+                    const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  dateStr,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const Divider(color: Colors.white24, height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Column(
+                      children: [
+                        Text('$count', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 2),
+                        const Text('ครั้ง (รอบ)', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      ],
+                    ),
+                    Container(width: 1, height: 30, color: Colors.white24),
+                    Column(
+                      children: [
+                        Text('$duration', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 2),
+                        const Text('วินาที', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      ],
+                    ),
+                    Container(width: 1, height: 30, color: Colors.white24),
+                    Column(
+                      children: [
+                        Text('$accuracy%', style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 2),
+                        const Text('ความแม่นยำ', style: TextStyle(color: Colors.white70, fontSize: 11)),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

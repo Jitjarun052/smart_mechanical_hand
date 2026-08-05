@@ -197,6 +197,18 @@ class _SettingsPageState extends State<SettingsPage> {
                           if (isDeviceBound) {
                             _showUnbindBottomSheet(context);
                           } else {
+                            // 🛡️ ดักเช็ก _userId ก่อนเปิดหน้าผูกอุปกรณ์
+                            if (_userId == null) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('กำลังโหลดข้อมูลผู้ใช้ กรุณารอสักครู่แล้วลองใหม่อีกครั้ง'),
+                                  backgroundColor: Colors.orange,
+                                ),
+                              );
+                              _fetchSettingsData();
+                              return;
+                            }
+
                             Navigator.push(
                               context,
                               MaterialPageRoute(

@@ -33,24 +33,24 @@ class _SignInScreenState extends State<SignInScreen> {
 
     setState(() => _isLoading = true);
 
-    // 🚀 เรียกใช้ AuthService[cite: 11]
     final result = await AuthService.login(email, password);
 
     if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (result['success'] == true) {
-      final String role = result['role'];
+      final String role = result['role'] ?? '';
 
       if (role == 'doctor') {
         _showLoginSuccessDoctor('ยินดีต้อนรับคุณหมอ/เจ้าหน้าที่ (นักกายภาพบำบัด)', result['token']);
-      } else if (role == 'patient') {
-        _showLoginSuccess('ยินดีต้อนรับผู้ป่วย เข้าสู่ระบบบันทึกผลมือกล', result['token']);
+      } else if (role == 'patient' || role == 'admin') {
+        // 🟢 เพิ่มรองรับ role == 'admin' ให้ล็อกอินเข้า Dashboard ได้เหมือนกัน
+        _showLoginSuccess('เข้าสู่ระบบสำเร็จ ยินดีต้อนรับเข้าสู่ระบบบันทึกผลมือกล', result['token']);
       } else {
-        _showErrorDialog('ไม่พบสิทธิ์การใช้งานที่ถูกต้อง');
+        _showErrorDialog('ไม่พบสิทธิ์การใช้งานที่ถูกต้อง (Role: $role)');
       }
     } else {
-      _showErrorDialog(result['message']);
+      _showErrorDialog(result['message'] ?? 'อีเมลหรือรหัสผ่านไม่ถูกต้อง');
     }
   }
 
