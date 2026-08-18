@@ -87,11 +87,11 @@ class DeviceService {
     }
   }
 
-// 📡 [เพิ่มใหม่] เช็กสเตตัสการทำงานและจำนวนรอบ Real-time จาก ESP32
+// 📡 เช็กสเตตัสการทำงานและจำนวนรอบ Real-time (ส่ง ?caller=app เพื่อไม่ให้อัปเดต last_seen)
 static Future<Map<String, dynamic>?> getDeviceStatus(int deviceId) async {
   try {
     final response = await http.get(
-      Uri.parse('${ApiConfig.baseUrl}/device/status/$deviceId'),
+      Uri.parse('${ApiConfig.baseUrl}/device/status/$deviceId?caller=app'), // 👈 เติม ?caller=app ตรงนี้ครับ
       headers: ApiConfig.headers,
     );
 

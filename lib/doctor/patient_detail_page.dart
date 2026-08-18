@@ -2,10 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../theme/app_theme.dart';
 import '../api/history_service.dart';
+import '../api/doctor_service.dart';
 
 class PatientDetailPage extends StatefulWidget {
   final Map<String, dynamic> patientData;
-  const PatientDetailPage({super.key, required this.patientData});
+  final String? doctorToken; // 🔑 รับ doctorToken สำหรับยืนยันสิทธิ์
+
+  const PatientDetailPage({
+    super.key, 
+    required this.patientData, 
+    this.doctorToken,
+  });
 
   @override
   State<PatientDetailPage> createState() => _PatientDetailPageState();
@@ -15,6 +22,10 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   int _selectedTab = 1; // 0 = รายวัน, 1 = รายสัปดาห์, 2 = รายเดือน
   int _displayLimit = 10; // 🟢 จำนวนแสดงผลเริ่มต้น
   
+  // 🩺 ค่าเป้าหมายที่แพทย์กำหนด (Prescription Target)
+  late int _targetCount;
+  late int _targetSet;
+
   String _selectedFinger = 'นิ้วชี้';
   final List<String> _fingers = ['นิ้วโป้ง', 'นิ้วชี้', 'นิ้วกลาง', 'นิ้วนาง', 'นิ้วก้อย'];
 
@@ -30,7 +41,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     'เดือน: ก.ย.': 9, 'เดือน: ต.ค.': 10, 'เดือน: พ.ย.': 11, 'เดือน: ธ.ค.': 12,
   };
 
-  // 🗺️ แมปชื่อภาษาไทยเข้ากับชื่อ Column ใน MySQL Database
   final Map<String, String> _fingerColumnMap = {
     'นิ้วโป้ง': 'finger_thumb',
     'นิ้วชี้': 'finger_index',
@@ -42,10 +52,12 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
   @override
   void initState() {
     super.initState();
+    // 🟢 ดึงค่าเป้าหมายเดิมจาก patientData หรือตั้ง Default (10 ครั้ง / 3 เซ็ต)
+    _targetCount = (widget.patientData['target_count'] as num?)?.toInt() ?? 10;
+    _targetSet = (widget.patientData['target_set'] as num?)?.toInt() ?? 3;
     _fetchPatientHistory();
   }
 
-  // 📡 ดึงข้อมูลประวัติการฝึกจริงจาก DB ของคนไข้รายนี้
   Future<void> _fetchPatientHistory() async {
     setState(() => _isLoading = true);
     
@@ -60,13 +72,136 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     }
   }
 
-  // 🧮 ฟังก์ชันคำนวณสถิติตาม ช่วงเวลา / เดือน / ปี
+  // 📝 Dialog สำหรับให้แพทย์แก้ไข/กำหนดจำนวนเป้าหมาย พร้อมเรียก API
+  Future<void> _showEditTargetDialog() async {
+    final TextEditingController countController = TextEditingController(text: _targetCount.toString());
+    final TextEditingController setController = TextEditingController(text: _targetSet.toString());
+    bool isSaving = false;
+
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+              title: const Row(
+                children: [
+                  Icon(Icons.edit_calendar_rounded, color: AppTheme.primaryColor),
+                  SizedBox(width: 8),
+                  Text('กำหนดเป้าหมายการฝึก', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: countController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'จำนวนครั้งต่อเซ็ต (ครั้ง)',
+                        prefixIcon: Icon(Icons.repeat_rounded),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: setController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'จำนวนเซ็ตเป้าหมาย (เซ็ต)',
+                        prefixIcon: Icon(Icons.fitness_center_rounded),
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.of(dialogContext).pop(),
+                  child: const Text('ยกเลิก', style: TextStyle(color: Colors.grey)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: isSaving
+                      ? null
+                      : () async {
+                          final int? newCount = int.tryParse(countController.text.trim());
+                          final int? newSet = int.tryParse(setController.text.trim());
+
+                          if (newCount == null || newSet == null || newCount <= 0 || newSet <= 0) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('กรุณาระบุจำนวนครั้งและเซ็ตให้ถูกต้อง'),
+                                backgroundColor: Colors.orange,
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() => isSaving = true);
+
+                          // 📡 🟢 ยิง API ไปยัง Backend ผ่าน DoctorService
+                          final result = await DoctorService.updatePrescription(
+                            patientId: widget.patientData['id'],
+                            targetCount: newCount,
+                            targetSet: newSet,
+                            doctorToken: widget.doctorToken,
+                          );
+
+                          setDialogState(() => isSaving = false);
+
+                          if (result['success'] == true) {
+                            setState(() {
+                              _targetCount = newCount;
+                              _targetSet = newSet;
+                              widget.patientData['target_count'] = newCount;
+                              widget.patientData['target_set'] = newSet;
+                            });
+
+                            Navigator.of(dialogContext).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(result['message'] ?? 'บันทึกเป้าหมายการฝึกเรียบร้อยแล้ว'),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(result['message'] ?? 'เกิดข้อผิดพลาดในการบันทึก'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Text('บันทึกเป้าหมาย', style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Map<String, dynamic> _calculateStats() {
     final int targetYearBE = int.tryParse(_selectedYear.replaceAll('ปี: ', '')) ?? 2569;
-    final int targetYearAD = targetYearBE - 543; // แปลง พ.ศ. เป็น ค.ศ.
+    final int targetYearAD = targetYearBE - 543;
     final int targetMonth = _monthMap[_selectedMonth] ?? 6;
 
-    // 1. กรองประวัติตามปี
     final filteredByYear = _patientHistoryList.where((item) {
       if (item['created_at'] == null) return false;
       try {
@@ -77,7 +212,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
       }
     }).toList();
 
-    // 2. กรองประวัติตามเดือน + 🟢 แปลง Type เป็น List<Map<String, dynamic>>
     final List<Map<String, dynamic>> filteredByMonth = filteredByYear.where((item) {
       if (item['created_at'] == null) return false;
       try {
@@ -116,7 +250,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     };
   }
 
-  // 📊 ดึงค่าองศาจากคอลัมน์นิ้วที่เลือกจาก Dropdown มาพลอตเป็นจุด FlSpot บนกราฟ
   List<FlSpot> _generateChartSpots(List<Map<String, dynamic>> monthData) {
     if (monthData.isEmpty) {
       return [const FlSpot(1, 0), const FlSpot(2, 0), const FlSpot(3, 0), const FlSpot(4, 0)];
@@ -168,9 +301,13 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                 children: [
                   // 🩺 1. การ์ดโปรไฟล์คนไข้
                   _buildPatientHeaderProfile(),
+                  const SizedBox(height: 16),
+
+                  // 🎯 2. การ์ดเป้าหมายการฝึกที่แพทย์กำหนด (Prescription Card)
+                  _buildTargetPrescriptionCard(),
                   const SizedBox(height: 24),
 
-                  // 📈 2. ส่วนหัวกราฟพัฒนาการ + Dropdown เลือกนิ้ว
+                  // 📈 3. ส่วนหัวกราฟพัฒนาการ + Dropdown เลือกนิ้ว
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -187,8 +324,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                           ),
                         ],
                       ),
-                      
-                      // Dropdown เลือกนิ้วมือ
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
                         decoration: BoxDecoration(
@@ -213,7 +348,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   ),
                   const SizedBox(height: 16),
 
-                  // 📊 3. ตัวกล่องกราฟเส้น
+                  // 📊 4. ตัวกล่องกราฟเส้น
                   Container(
                     height: 250,
                     padding: const EdgeInsets.only(right: 20, top: 16, bottom: 10),
@@ -226,7 +361,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   ),
                   const SizedBox(height: 28),
 
-                  // 💊 4. รายงานผลรวมแบ่งตามช่วงเวลา
+                  // 💊 5. รายงานผลรวมแบ่งตามช่วงเวลา
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -270,7 +405,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                   ),
                   const SizedBox(height: 24),
 
-                  // 📋 5. รายการประวัติฝึกซ้อมย้อนหลัง
+                  // 📋 6. รายการประวัติฝึกซ้อมย้อนหลัง
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -281,7 +416,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                       IconButton(
                         icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
                         onPressed: () {
-                          setState(() => _displayLimit = 10); // รีเซ็ตการแสดงผลกลับมาเป็น 10 รายการเมื่อกด Refresh
+                          setState(() => _displayLimit = 10);
                           _fetchPatientHistory();
                         },
                       )
@@ -309,7 +444,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                 final num? wristAngle = item['wrist_angle'];
                                 final String rawDate = item['created_at'] ?? '';
 
-                                // ดึงค่าองศาแยกนิ้ว
                                 final int fThumb = item['finger_thumb'] ?? 0;
                                 final int fIndex = item['finger_index'] ?? 0;
                                 final int fMiddle = item['finger_middle'] ?? 0;
@@ -372,8 +506,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                 );
                               },
                             ),
-                            
-                            // 🟢 ปุ่ม "แสดงเพิ่มเติม (+10)" จะโชว์เฉพาะเมื่อยังมีรายการเหลือให้ดู
                             if (_patientHistoryList.length > _displayLimit)
                               Padding(
                                 padding: const EdgeInsets.only(top: 12.0, bottom: 8.0),
@@ -388,7 +520,7 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
                                     ),
                                     onPressed: () {
                                       setState(() {
-                                        _displayLimit += 10; // เพิ่มการแสดงผลทีละ 10 รายการ
+                                        _displayLimit += 10;
                                       });
                                     },
                                     icon: const Icon(Icons.keyboard_arrow_down_rounded),
@@ -407,7 +539,61 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  // 🏥 Widget การ์ดโปรไฟล์ส่วนบน
+  // 🎯 การ์ดแสดงเป้าหมายการฝึกที่แพทย์กำหนด + ปุ่มแก้ไข
+  Widget _buildTargetPrescriptionCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.flag_rounded, color: AppTheme.primaryColor, size: 20),
+                  SizedBox(width: 8),
+                  Text('เป้าหมายการฝึก', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.textPrimary)),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.edit_note_rounded, color: AppTheme.primaryColor, size: 22),
+                tooltip: 'แก้ไขจำนวนเป้าหมาย',
+                onPressed: _showEditTargetDialog,
+              )
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              Column(
+                children: [
+                  const Text('จำนวนครั้ง / เซ็ต', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  const SizedBox(height: 4),
+                  Text('$_targetCount ครั้ง', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                ],
+              ),
+              Container(width: 1, height: 30, color: Colors.grey.withOpacity(0.3)),
+              Column(
+                children: [
+                  const Text('จำนวนเซ็ตเป้าหมาย', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                  const SizedBox(height: 4),
+                  Text('$_targetSet เซ็ต', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.primaryColor)),
+                ],
+              ),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
   Widget _buildPatientHeaderProfile() {
     return Container(
       width: double.infinity,
@@ -458,7 +644,6 @@ class _PatientDetailPageState extends State<PatientDetailPage> {
     );
   }
 
-  // 📊 ตัวสร้างกราฟเส้น FL Chart
   Widget _buildLineChartGraphic(List<Map<String, dynamic>> monthData) {
     final spots = _generateChartSpots(monthData);
 

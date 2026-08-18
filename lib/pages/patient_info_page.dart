@@ -22,7 +22,7 @@ class _PatientInfoScreenState extends State<PatientInfoScreen> {
 
   // 🩺 ข้อมูลแพทย์ที่ดึงมาจาก API
   String? _selectedDoctorId;
-  List<Map<String, String>> _doctorOptions = [];
+  List<Map<String, dynamic>> _doctorOptions = [];
 
   // Controllers สำหรับทุกช่องข้อมูล
   final _firstnameController = TextEditingController();
@@ -277,21 +277,23 @@ class _PatientInfoScreenState extends State<PatientInfoScreen> {
                         ),
                       )
                     else
-                      Autocomplete<Map<String, String>>(
+                      Autocomplete<Map<String, dynamic>>(
                         initialValue: TextEditingValue(
                           text: _doctorOptions.firstWhere(
                             (doc) => doc['id'] == _selectedDoctorId,
                             orElse: () => {'name': ''},
-                          )['name']!,
+                          )['name'] as String,
                         ),
-                        displayStringForOption: (option) => option['name']!,
+                        displayStringForOption: (option) => option['name']as String,
                         optionsBuilder: (textEditingValue) {
                           if (textEditingValue.text.isEmpty) return _doctorOptions;
-                          return _doctorOptions.where((doc) => doc['name']!.toLowerCase().contains(textEditingValue.text.toLowerCase()));
+                          return _doctorOptions.where((doc) => 
+                            (doc['name'] as String).toLowerCase().contains(textEditingValue.text.toLowerCase())
+                          );
                         },
                         onSelected: (selection) {
                           setState(() {
-                            _selectedDoctorId = selection['id'];
+                            _selectedDoctorId = selection['id']as String;
                           });
                         },
                         fieldViewBuilder: (context, textEditingController, focusNode, onFieldSubmitted) {

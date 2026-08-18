@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 import '../theme/app_theme.dart';
 import '../api/history_service.dart';
 import '../api/device_service.dart';
+import '../api/api_config.dart';
+import '../widgets/video_train/glove_video_widget.dart';
 
 class TrainingPage extends StatefulWidget {
   final int userId;
@@ -25,20 +29,23 @@ class _TrainingPageState extends State<TrainingPage> {
   int _secondsElapsed = 0;
 
   int _flexCount = 0; // รอบจริงที่รับมาจาก ESP32
-  int _targetCount = 12; // รอบเป้าหมาย
+  int _targetCount = 10; // รอบเป้าหมายต่อเซ็ต (ดึงจากหมอ)
+  int _targetSet = 3; // จำนวนเซ็ตเป้าหมาย (ดึงจากหมอ)
+  int _currentSet = 1; // เซ็ตปัจจุบันที่กำลังฝึก
+
   double _accuracy = 0.0;
   int _totalTrainingMin = 0;
   
   String _deviceName = 'ถุงมืออัจฉริยะ';
-  String _deviceStatus = 'พร้อมใช้งาน';
-  bool _isConnected = true; 
+  String _deviceStatus = 'กำลังตรวจสอบสถานะ...';
+  bool _isConnected = false;
 
   @override
   void initState() {
     super.initState();
     debugPrint('🔍 TrainingPage loaded with userId: ${widget.userId}, deviceId: ${widget.deviceId}');
     _fetchDeviceInfoAndSummary();
-    _startLiveSync(); // เริ่มซิงค์ข้อมูลกับ Backend/ESP32
+    _startLiveSync();
   }
 
   @override
@@ -48,20 +55,33 @@ class _TrainingPageState extends State<TrainingPage> {
     super.dispose();
   }
 
-  // 📡 1. ดึงข้อมูลอุปกรณ์และสรุปประวัติรวมจาก Database
+  // 📡 1. ดึงเป้าหมายจากแพทย์ + ข้อมูลอุปกรณ์ + สรุปประวัติรวม
   Future<void> _fetchDeviceInfoAndSummary() async {
     try {
+      final userRes = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/user/${widget.userId}'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (userRes.statusCode == 200) {
+        final uData = jsonDecode(userRes.body);
+        final userData = uData['user'] ?? uData['data'] ?? uData;
+        if (userData != null && mounted) {
+          setState(() {
+            _targetCount = (userData['target_count'] as num?)?.toInt() ?? 10;
+            _targetSet = (userData['target_set'] as num?)?.toInt() ?? 3;
+          });
+        }
+      }
+
       final deviceData = await DeviceService.getDeviceByUserId(widget.userId);
       if (deviceData != null && mounted) {
         setState(() {
           _deviceName = deviceData['device_name'] ?? 'ถุงมืออัจฉริยะ Smart Glove';
-          _isConnected = true;
-          _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน';
         });
       }
 
       final historyList = await HistoryService.getHistoryByUserId(widget.userId.toString());
-      
       if (historyList.isNotEmpty && mounted) {
         int totalDurationSec = 0;
         double sumAccuracy = 0.0;
@@ -77,21 +97,28 @@ class _TrainingPageState extends State<TrainingPage> {
         });
       }
     } catch (e) {
-      debugPrint('Fetch Device Info Error: $e');
+      debugPrint('Fetch Training Info Error: $e');
     }
   }
 
-  // 🔴 1. เมื่อกดปุ่ม "เริ่มต้น / หยุดการฝึกซ้อม" บนหน้าจอหลัก
+  // 🔴 เมื่อกดปุ่ม "เริ่มต้น / หยุดการฝึก"
   Future<void> _toggleTraining() async {
+    if (!_isConnected && !_isTraining) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('⚠️ กรุณาเปิดเครื่องถุงมืออัจฉริยะ (ESP32) และรอให้ออนไลน์ก่อนเริ่มฝึก'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
     if (_isTraining) {
-      // 🟢 สั่งพักเครื่องก่อนทันที เพื่อให้ลมหยุดเป่าขณะขึ้น Pop-up ถาม
       try {
         await DeviceService.sendControlCommand(widget.deviceId, 'PAUSE-APP');
       } catch (_) {}
-
       _showStopConfirmDialog();
     } else {
-      // สั่งเริ่มฝึกใหม่ตั้งแต่รอบแรก
       try {
         await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
       } catch (e) {
@@ -100,156 +127,169 @@ class _TrainingPageState extends State<TrainingPage> {
 
       setState(() {
         _isTraining = true;
-        _startLocalTimer(resetTime: true); // ล้างเวลาเป็น 0 เมื่อเริ่มฝึกใหม่
+        _startLocalTimer(resetTime: _flexCount == 0);
       });
     }
   }
 
   // 📡 ซิงค์สเตตัสเรียลไทม์กับ Backend
   void _startLiveSync() {
-    _liveTimer = Timer.periodic(const Duration(milliseconds: 300), (timer) async {
+    _liveTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) async {
       try {
         final statusData = await DeviceService.getDeviceStatus(widget.deviceId);
         
         if (mounted && statusData != null) {
+          final dynamic rawOnline = statusData['is_online'];
+          final bool onlineStatus = (rawOnline == true || rawOnline == 1 || rawOnline == 'true' || rawOnline == '1');
+
           String statusStr = statusData['training_status']?.toString().toUpperCase() ?? '';
-          
-          // 🟢 เช็กให้ครอบคลุม: ถ้ารับมาเป็น "START-APP" หรือ "START-IOT" ให้ถือว่ากำลังฝึกซ้อม!
           bool isIoTActive = statusStr.contains('START');
           int liveCountFromBackend = (statusData['live_count'] as num? ?? 0).toInt();
 
-          // 🟢 เมื่อสเตตัสใน DB เปลี่ยนแปลง (เช่น เปิดจากปุ่มภายนอก หรือกดจากแอป)
-          if (isIoTActive != _isTraining) {
+          if (!onlineStatus && _isTraining) {
+            setState(() {
+              _isTraining = false;
+              _stopLocalTimer();
+            });
+          }
+
+          if (isIoTActive != _isTraining && onlineStatus) {
             setState(() {
               _isTraining = isIoTActive;
               if (_isTraining) {
                 _startLocalTimer(resetTime: false); 
               } else {
                 _stopLocalTimer();
-                _fetchDeviceInfoAndSummary(); // ดึงสรุปผล
+                _fetchDeviceInfoAndSummary();
               }
             });
           }
 
           setState(() {
-            _isConnected = true;
-            _deviceStatus = _isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน';
-            if (_isTraining) {
+            _isConnected = onlineStatus;
+            _deviceStatus = !_isConnected 
+                ? 'อุปกรณ์ออฟไลน์ (ปิดเครื่อง)' 
+                : (_isTraining ? 'กำลังทำงาน' : 'พร้อมใช้งาน');
+
+            if (_isTraining && _isConnected) {
               _flexCount = liveCountFromBackend;
+              // 🟢 เมื่อจำนวนครั้งถึงเป้าหมายประจำเซ็ต
               if (_flexCount >= _targetCount) {
                 _isTraining = false;
-                _showGoalReachedDialog();
+                _handleSetOrWorkoutComplete();
               }
             }
           });
         }
       } catch (e) {
-        debugPrint('LiveSync Error: $e');
+        if (mounted) {
+          setState(() {
+            _isConnected = false;
+            _deviceStatus = 'ไม่สามารถเชื่อมต่ออุปกรณ์ได้';
+          });
+        }
       }
     });
+  } 
+
+  // 🔀 🟢 จัดการเมื่อทำครบเซ็ต -> สั่ง STOP-APP เพื่อบันทึก DB และล้างค่า ESP32 เป็น 0 ทันที
+  Future<void> _handleSetOrWorkoutComplete() async {
+    setState(() {
+      _isTraining = false;
+      _flexCount = 0;
+    });
+    _stopLocalTimer();
+
+    // 🚀 ยิง STOP-APP เพื่อให้ ESP32 สั่ง sendDataToDatabase() และรีเซ็ต repCount = 0
+    try {
+      await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
+    } catch (e) {
+      debugPrint('Error sending STOP-APP on set complete: $e');
+    }
+
+    setState(() {
+      _flexCount = 0;
+      _secondsElapsed = 0;
+    });
+
+    _fetchDeviceInfoAndSummary(); // ดึงประวัติที่เพิ่งบันทึกมาอัปเดตสถิติ
+
+    if (!mounted) return;
+    if (_currentSet < _targetSet) {
+      _showSetCompletedDialog(); // จบเซ็ตย่อย -> แจ้งเตือนและเตรียมเซ็ตถัดไป
+    } else {
+      _showAllSetsCompletedDialog(); // ครบทุกเซ็ต -> จบโปรแกรมฝึก
+    }
   }
-  
-  // ❓ Pop-up ถามยืนยันเมื่อกดหยุดฝึกซ้อมกลางคัน
-  void _showStopConfirmDialog() {
+
+  // 🔔 1. Pop-up เมื่อจบเซ็ตย่อย (บันทึกเซ็ตนี้เรียบร้อย)
+  void _showSetCompletedDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: const [
-              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
-              SizedBox(width: 8),
-              Text('หยุดการฝึกซ้อม?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          backgroundColor: Colors.white,
+          title: Column(
+            children: [
+              const Icon(Icons.check_circle_rounded, color: Color(0xFF10AC84), size: 52),
+              const SizedBox(height: 10),
+              Text(
+                '🎉 บันทึกเซ็ตที่ $_currentSet เรียบร้อย!',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                textAlign: TextAlign.center,
+              ),
             ],
           ),
-          content: Text(
-            'คุณทำไปแล้ว $_flexCount / $_targetCount ครั้ง ต้องการหยุดและบันทึกผลการฝึกซ้อมตอนนี้เลยหรือไม่?',
-            style: const TextStyle(fontSize: 14),
-          ),
-          actions: [
-            // 🟢 กรณีเลือก "ฝึกต่อ": ยิง START-APP เพื่อให้ ESP32 ลุยต่อจากรอบเดิม!
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                try {
-                  await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
-                } catch (_) {}
-                
-                setState(() {
-                  _isTraining = true;
-                  _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม ไม่ reset เป็น 0
-                });
-              },
-              child: const Text('ฝึกต่อ', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-            ),
-            
-            // 🔴 กรณีเลือก "หยุด & บันทึกผล": ยิง STOP-APP เพื่อบันทึก DB และล้างค่า
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'ระบบบันทึกผลการฝึกเซ็ตที่ $_currentSet เข้าสู่ประวัติแล้ว\n(เหลืออีก ${_targetSet - _currentSet} เซ็ตตามเป้าหมายของแพทย์)',
+                style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary, height: 1.4),
+                textAlign: TextAlign.center,
               ),
-              onPressed: () async {
-                Navigator.pop(context);
-                try {
-                  await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
-                } catch (e) {
-                  debugPrint('Send STOP-APP Error: $e');
-                }
+              const SizedBox(height: 20),
+              
+              // ปุ่มพักผ่อน 1 นาทีก่อนเริ่มเซ็ตใหม่
+              SizedBox(
+                width: double.infinity,
+                height: 46,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10AC84),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
+                    elevation: 0,
+                  ),
+                  onPressed: () {
+                    Navigator.pop(context);
+                    _showRestTimerDialog(isNextSet: true);
+                  },
+                  icon: const Icon(Icons.timer_rounded),
+                  label: Text('พักมือ 1 นาที เพื่อเริ่มเซ็ตที่ ${_currentSet + 1}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 10),
 
-                setState(() {
-                  _isTraining = false;
-                  _flexCount = 0;      
-                  _secondsElapsed = 0; 
-                  _stopLocalTimer();
-                  _fetchDeviceInfoAndSummary();
-                });
-              },
-              child: const Text('หยุด & บันทึกผล', style: TextStyle(fontWeight: FontWeight.bold)),
-            ),
-          ],
+              // ปุ่มเริ่มเซ็ตถัดไปทันที
+              TextButton(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  _startNextSetImmediately();
+                },
+                child: Text('ไม่พัก เริ่มเซ็ตที่ ${_currentSet + 1} ทันที ➔', style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
         );
       },
     );
   }
 
-  // ⏱️ ยุบเหลือฟังก์ชันเดียว ควบคุมการ reset เวลาด้วย resetTime ( default = false )
-  void _startLocalTimer({bool resetTime = false}) {
-    if (resetTime) {
-      _secondsElapsed = 0; // ล้างเวลาเป็น 0 เมื่อสั่งเริ่มเซสชันใหม่จริงๆ
-    }
-    
-    _stopwatchTimer?.cancel();
-    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (!mounted) return;
-      setState(() {
-        _secondsElapsed++;
-      });
-    });
-  }
-
-  void _stopLocalTimer() {
-    _stopwatchTimer?.cancel();
-  }
-
-  String _formatTime(int seconds) {
-    int mins = seconds ~/ 60;
-    int secs = seconds % 60;
-    return "${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}";
-  }
-
-  // 🏆 Pop-up เมื่อฝึกซ้อมครบตามเป้าหมาย (Goal Reached)
-  void _showGoalReachedDialog() {
-    _stopLocalTimer();
-    
-    // 🟢 สั่ง PAUSE-APP ไว้ชั่วคราว เพื่อหยุดลมระหว่างผู้ป่วยเลือกเมนู
-    try {
-      DeviceService.sendControlCommand(widget.deviceId, 'PAUSE-APP');
-    } catch (_) {}
-
+  // 🏆 2. Pop-up เมื่อฝึกครบทุกเซ็ตตามแผนแพทย์
+  void _showAllSetsCompletedDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -262,7 +302,7 @@ class _TrainingPageState extends State<TrainingPage> {
               Icon(Icons.emoji_events_rounded, color: Color(0xFFFF9F43), size: 56),
               SizedBox(height: 12),
               Text(
-                '🎉 ยินดีด้วย! ครบเป้าหมายแล้ว',
+                '🏆 ยอดเยี่ยมมาก!',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
                 textAlign: TextAlign.center,
               ),
@@ -272,13 +312,12 @@ class _TrainingPageState extends State<TrainingPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'คุณบริหารมือครบ $_targetCount ครั้งตามที่ตั้งไว้เรียบร้อยแล้ว!',
-                style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+                'คุณบริหารมือครบทั้ง $_targetSet เซ็ต ($_targetCount ครั้ง/เซ็ต)\nและบันทึกประวัติการรักษาทั้งหมดเรียบร้อยแล้ว!',
+                style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary, height: 1.4),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
               
-              // 🟢 1. ปุ่ม "เสร็จสิ้น & บันทึกผล"
               SizedBox(
                 width: double.infinity,
                 height: 46,
@@ -289,68 +328,19 @@ class _TrainingPageState extends State<TrainingPage> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
                     elevation: 0,
                   ),
-                  onPressed: () async {
+                  onPressed: () {
                     Navigator.pop(context);
-                    
-                    // 🚀 ยิงสั่ง STOP-APP ไปที่ Backend/ESP32 เพื่อบันทึก DB และล้างค่าเป็น 0
-                    try {
-                      await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
-                    } catch (e) {
-                      debugPrint('Send STOP-APP Goal Error: $e');
-                    }
-
                     setState(() {
                       _isTraining = false;
                       _flexCount = 0; 
+                      _currentSet = 1;
                       _secondsElapsed = 0;
                     });
-                    _fetchDeviceInfoAndSummary();
                   },
                   icon: const Icon(Icons.check_circle_rounded),
-                  label: const Text('เสร็จสิ้น & บันทึกผล', style: TextStyle(fontWeight: FontWeight.bold)),
+                  label: const Text('เสร็จสิ้นการฝึก', style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
-              const SizedBox(height: 10),
-
-              // 🟢 2. ปุ่ม "พักผ่อน 1 นาที"
-              SizedBox(
-                width: double.infinity,
-                height: 46,
-                child: OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFF10AC84),
-                    side: const BorderSide(color: Color(0xFF10AC84), width: 1.5),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(23)),
-                  ),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    _showRestTimerDialog();
-                  },
-                  icon: const Icon(Icons.timer_rounded),
-                  label: const Text('พักผ่อน 1 นาที (พักมือ)', style: TextStyle(fontWeight: FontWeight.bold)),
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // 🟢 3. ปุ่ม "ฝึกต่ออีก 5 ครั้ง (+5)"
-              TextButton(
-                onPressed: () async {
-                  Navigator.pop(context); 
-                  
-                  // 🚀 ยิงสั่ง START-APP กลับไปเพื่อให้ ESP32 เริ่มเป่าลมต่อและนับรอบต่อจากเดิม
-                  try {
-                    await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
-                  } catch (_) {}
-
-                  setState(() {
-                    _targetCount += 5;   
-                    _isTraining = true;  
-                  });
-
-                  _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม
-                },
-                child: const Text('ฝึกต่ออีก 5 ครั้ง (+5)', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-              )
             ],
           ),
         );
@@ -358,7 +348,8 @@ class _TrainingPageState extends State<TrainingPage> {
     );
   }
 
-  void _showRestTimerDialog() {
+  // ⏱️ ตัวนับเวลาพักผ่อน
+  void _showRestTimerDialog({bool isNextSet = false}) {
     int restSeconds = 60;
     Timer? restTimer;
 
@@ -374,19 +365,9 @@ class _TrainingPageState extends State<TrainingPage> {
               } else {
                 t.cancel();
                 Navigator.pop(context);
-                
-                // 🟢 1. เมื่อพักผ่อนครบ 60 วินาที -> ยิงสั่ง START-APP เพื่อลุยต่ออีก 5 ครั้ง!
-                try {
-                  DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
-                } catch (e) {
-                  debugPrint('Send START-APP Rest complete Error: $e');
+                if (isNextSet) {
+                  _startNextSetImmediately();
                 }
-
-                setState(() {
-                  _targetCount += 5;
-                  _isTraining = true;
-                });
-                _startLocalTimer(resetTime: false); // นับเวลาต่อจากเดิม
               }
             });
 
@@ -400,7 +381,10 @@ class _TrainingPageState extends State<TrainingPage> {
                   children: [
                     const Icon(Icons.airline_seat_recline_extra_rounded, color: Colors.blue, size: 48),
                     const SizedBox(height: 12),
-                    const Text('ช่วงเวลาพักผ่อนกล้ามเนื้อ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    Text(
+                      isNextSet ? 'พักมือเตรียมเริ่มเซ็ตที่ ${_currentSet + 1}' : 'ช่วงเวลาพักผ่อนกล้ามเนื้อ',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
                     const SizedBox(height: 4),
                     const Text('ผ่อนคลายข้อมือและนิ้วมือชั่วคราว', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
                     const SizedBox(height: 20),
@@ -422,27 +406,14 @@ class _TrainingPageState extends State<TrainingPage> {
                           elevation: 0,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
                         ),
-                        // 🔴 2. เมื่อกดปุ่ม "ข้ามพักผ่อน & พอแค่นี้" -> ยิงสั่ง STOP-APP จบการฝึกทันที!
-                        onPressed: () async {
+                        onPressed: () {
                           restTimer?.cancel();
                           Navigator.pop(context);
-                          
-                          try {
-                            // 🟢 ยิง STOP-APP เพื่อเซฟ DB และล้างค่าใน ESP32
-                            await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
-                          } catch (e) {
-                            debugPrint('Send STOP-APP Skip Rest Error: $e');
+                          if (isNextSet) {
+                            _startNextSetImmediately();
                           }
-
-                          setState(() {
-                            _isTraining = false;
-                            _flexCount = 0;
-                            _secondsElapsed = 0;
-                          });
-                          _stopLocalTimer();
-                          _fetchDeviceInfoAndSummary();
                         },
-                        child: const Text('ข้ามพักผ่อน & พอแค่นี้', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: const Text('ข้ามเวลาพัก & ลุยต่อทันที', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ),
                   ],
@@ -455,117 +426,102 @@ class _TrainingPageState extends State<TrainingPage> {
     );
   }
 
-  void _showTargetPickerBottomSheet() {
-    int tempTarget = _targetCount;
+  // 🚀 🟢 เริ่มเซ็ตถัดไป (นับครั้งเริ่มจาก 0 ใหม่)
+  Future<void> _startNextSetImmediately() async {
+    setState(() {
+      _currentSet++;
+      _flexCount = 0;
+      _secondsElapsed = 0;
+      _isTraining = true;
+    });
 
-    showModalBottomSheet(
+    try {
+      await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
+    } catch (_) {}
+
+    _startLocalTimer(resetTime: true);
+  }
+
+  // ❓ ยืนยันเมื่อกดหยุดกลางคัน
+  void _showStopConfirmDialog() {
+    showDialog(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      backgroundColor: Colors.white,
+      barrierDismissible: false,
       builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'กำหนดเป้าหมายจำนวนครั้ง',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppTheme.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'ตั้งค่าจำนวนรอบการบริหารมือต่อเซสชันนี้',
-                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                  const SizedBox(height: 24),
-
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      IconButton.filledTonal(
-                        onPressed: tempTarget > 1
-                            ? () => setModalState(() => tempTarget--)
-                            : null,
-                        icon: const Icon(Icons.remove_rounded),
-                        iconSize: 28,
-                      ),
-                      const SizedBox(width: 24),
-                      Text(
-                        '$tempTarget',
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF10AC84),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'ครั้ง',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                      const SizedBox(width: 24),
-                      IconButton.filledTonal(
-                        onPressed: () => setModalState(() => tempTarget++),
-                        icon: const Icon(Icons.add_rounded),
-                        iconSize: 28,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 28),
-
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF10AC84),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(24),
-                        ),
-                        elevation: 0,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _targetCount = tempTarget;
-                        });
-                        Navigator.pop(context);
-                      },
-                      child: const Text(
-                        'บันทึกเป้าหมาย',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                ],
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+              SizedBox(width: 8),
+              Text('หยุดการฝึก?', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: Text(
+            'คุณทำไปแล้ว $_flexCount / $_targetCount ครั้ง ในเซ็ตที่ $_currentSet/$_targetSet ต้องการหยุดและบันทึกผลเซ็ตนี้เลยหรือไม่?',
+            style: const TextStyle(fontSize: 14),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  await DeviceService.sendControlCommand(widget.deviceId, 'START-APP');
+                } catch (_) {}
+                
+                setState(() {
+                  _isTraining = true;
+                  _startLocalTimer(resetTime: false);
+                });
+              },
+              child: const Text('ฝึกต่อ', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
-            );
-          },
+              onPressed: () async {
+                Navigator.pop(context);
+                try {
+                  await DeviceService.sendControlCommand(widget.deviceId, 'STOP-APP');
+                } catch (e) {
+                  debugPrint('Send STOP-APP Error: $e');
+                }
+
+                setState(() {
+                  _isTraining = false;
+                  _flexCount = 0;
+                  _currentSet = 1;
+                  _secondsElapsed = 0; 
+                  _stopLocalTimer();
+                  _fetchDeviceInfoAndSummary();
+                });
+              },
+              child: const Text('หยุด & บันทึกผล', style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         );
       },
     );
+  }
+
+  void _startLocalTimer({bool resetTime = false}) {
+    if (resetTime) _secondsElapsed = 0;
+    _stopwatchTimer?.cancel();
+    _stopwatchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      setState(() => _secondsElapsed++);
+    });
+  }
+
+  void _stopLocalTimer() => _stopwatchTimer?.cancel();
+
+  String _formatTime(int seconds) {
+    int mins = seconds ~/ 60;
+    int secs = seconds % 60;
+    return "${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}";
   }
 
   @override
@@ -573,7 +529,7 @@ class _TrainingPageState extends State<TrainingPage> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('โหมดฝึกซ้อมกายภาพ', style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text('โหมดฝึกกายภาพ', style: TextStyle(color: AppTheme.textPrimary, fontWeight: FontWeight.bold, fontSize: 18)),
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
@@ -586,6 +542,7 @@ class _TrainingPageState extends State<TrainingPage> {
         padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
         child: Column(
           children: [
+            // 📡 1. แถบสถานะอุปกรณ์
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
@@ -635,33 +592,35 @@ class _TrainingPageState extends State<TrainingPage> {
                 ],
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
 
+            // 🎯 2. แถบแสดงแผนการรักษาของแพทย์
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.primaryColor.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: AppTheme.primaryColor.withOpacity(0.2)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.medical_services_rounded, size: 16, color: AppTheme.primaryColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    'แผนฝึกของแพทย์: เซ็ตที่ $_currentSet/$_targetSet (เป้าหมาย $_targetCount ครั้ง/เซ็ต)',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.primaryColor),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // 🟢 วิดีโอแนะนำการฝึก
             SizedBox(
-              height: 180,
+              height: 200,
               child: Center(
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 400),
-                  padding: const EdgeInsets.all(28),
-                  decoration: BoxDecoration(
-                    color: _isTraining ? AppTheme.primaryColor.withOpacity(0.12) : Colors.grey.shade100,
-                    shape: BoxShape.circle,
-                    boxShadow: _isTraining
-                        ? [
-                            BoxShadow(
-                              color: AppTheme.primaryColor.withOpacity(0.25),
-                              blurRadius: 20,
-                              spreadRadius: 4,
-                            )
-                          ]
-                        : [],
-                  ),
-                  child: Icon(
-                    Icons.back_hand_rounded,
-                    size: 90,
-                    color: _isTraining ? AppTheme.primaryColor : Colors.grey.shade400,
-                  ),
-                ),
+                child: GloveVideoWidget(isTraining: _isTraining),
               ),
             ),
 
@@ -672,50 +631,118 @@ class _TrainingPageState extends State<TrainingPage> {
             ),
             const SizedBox(height: 24),
 
+            // 🟢 วงกลมคู่แสดงความคืบหน้า
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                InkWell(
-                  onTap: _isTraining ? null : _showTargetPickerBottomSheet,
-                  borderRadius: BorderRadius.circular(50),
-                  child: _buildCircleMetric(
-                    value: '$_targetCount',
-                    label: 'เป้าหมาย',
-                    unit: 'ครั้ง (แตะเปลี่ยน)',
-                    color: const Color(0xFF10AC84),
+                Container(
+                  width: 145,
+                  height: 145,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF10AC84).withOpacity(0.05),
+                    border: Border.all(color: const Color(0xFF10AC84), width: 3.5),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          Text(
+                            '$_flexCount',
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF10AC84),
+                            ),
+                          ),
+                          Text(
+                            ' / $_targetCount',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey.shade500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'ทำไปแล้ว / เป้าหมาย',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      Text(
+                        'เซ็ตที่ $_currentSet จาก $_targetSet เซ็ต',
+                        style: const TextStyle(fontSize: 10, color: Color(0xFF10AC84), fontWeight: FontWeight.bold),
+                      ),
+                    ],
                   ),
                 ),
-                _buildCircleMetric(
-                  value: _formatTime(_secondsElapsed),
-                  label: 'ระยะเวลา',
-                  unit: 'นาที:วินาที',
-                  color: const Color(0xFF10AC84),
-                  isBig: true,
-                ),
-                _buildCircleMetric(
-                  value: '$_flexCount',
-                  label: 'ทำไปแล้ว',
-                  unit: 'ครั้ง',
-                  color: const Color(0xFF10AC84),
+                
+                const SizedBox(width: 20),
+
+                // ระยะเวลาฝึก
+                Container(
+                  width: 120,
+                  height: 120,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.teal.shade300, width: 2.5),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _formatTime(_secondsElapsed),
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.bold,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'ระยะเวลา',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
+                      ),
+                      const Text(
+                        'นาที:วินาที',
+                        style: TextStyle(fontSize: 9, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 28),
 
+            // ปุ่มเริ่มต้น/หยุดการฝึก
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _isTraining ? Colors.redAccent : const Color(0xFF10AC84),
+                  backgroundColor: _isTraining 
+                      ? Colors.redAccent 
+                      : (_isConnected ? const Color(0xFF10AC84) : Colors.grey.shade400),
                   foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
                   elevation: 0,
                 ),
                 onPressed: _toggleTraining,
-                icon: Icon(_isTraining ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded, size: 28),
+                icon: Icon(
+                  _isTraining ? Icons.stop_circle_rounded : Icons.play_circle_fill_rounded, 
+                  size: 28,
+                ),
                 label: Text(
-                  _isTraining ? 'หยุดการฝึกซ้อม' : 'เริ่มต้นการฝึกซ้อม',
+                  _isTraining 
+                      ? 'หยุดการฝึก' 
+                      : (_isConnected ? 'เริ่มต้นการฝึก' : 'อุปกรณ์ออฟไลน์'),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -749,47 +776,6 @@ class _TrainingPageState extends State<TrainingPage> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildCircleMetric({
-    required String value,
-    required String label,
-    required String unit,
-    required Color color,
-    bool isBig = false,
-  }) {
-    double size = isBig ? 105 : 85;
-    return Column(
-      children: [
-        Container(
-          width: size,
-          height: size,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: color, width: isBig ? 4 : 3),
-          ),
-          child: Center(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: isBig ? 22 : 20,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
-        ),
-        Text(
-          unit,
-          style: const TextStyle(fontSize: 10, color: AppTheme.textSecondary),
-        ),
-      ],
     );
   }
 

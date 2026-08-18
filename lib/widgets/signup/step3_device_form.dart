@@ -194,41 +194,18 @@ class Step3DeviceForm extends StatelessWidget {
     );
   }
 
-  // 🚀 ฟังก์ชันตรวจสอบ Serial Number ก่อนส่งผ่าน Step
-  Future<void> _handleDeviceValidation(BuildContext context) async {
+  // 🚀 ฟังก์ชันส่งข้อมูล Serial Number ไปให้ขั้นตอนบันทึกสมัครสมาชิก
+  void _handleDeviceValidation(BuildContext context) {
     if (!formKey.currentState!.validate()) return;
 
     final serial = serialNumberController.text.trim();
     final name = deviceNameController.text.trim();
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => const Center(child: CircularProgressIndicator(color: AppTheme.primaryColor)),
-    );
-
-    final checkResult = await DeviceService.bindDevice(
-      serialNumber: serial,
-      userId: 0,
-      deviceName: name,
-    );
-
-    if (context.mounted) Navigator.pop(context);
-
-    if (checkResult['success'] == false) {
-      if (context.mounted) {
-        _showErrorModal(
-          context,
-          'ไม่สามารถผูกอุปกรณ์ได้',
-          checkResult['message'] ?? 'ไม่พบ Serial Number นี้ในระบบ หรือ ถูกลงทะเบียนไปแล้ว',
-        );
-      }
-    } else {
-      onSubmitWithDevice({
-        'serial_number': serial,
-        'device_name': name,
-      });
-    }
+    // 🟢 ส่งข้อมูลไปยัง onSubmitWithDevice (ซึ่งจะไปเรียก _handleFinalSignUp ใน signup_screen.dart ทันที)
+    onSubmitWithDevice({
+      'serial_number': serial,
+      'device_name': name,
+    });
   }
 
   @override
@@ -334,12 +311,18 @@ class Step3DeviceForm extends StatelessWidget {
                   child: SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primaryColor, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), elevation: 0),
-                      onPressed: isSubmitting
-                          ? null
-                          : () => _handleDeviceValidation(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primaryColor, 
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)), 
+                        elevation: 0
+                      ),
+                      onPressed: isSubmitting ? null : () => _handleDeviceValidation(context),
                       child: isSubmitting
-                          ? const CircularProgressIndicator(color: Colors.white)
+                          ? const SizedBox(
+                              width: 24, 
+                              height: 24, 
+                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                            )
                           : const Text('ยืนยันลงทะเบียน', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
                     ),
                   ),

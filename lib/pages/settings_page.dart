@@ -7,7 +7,7 @@ import '../theme/app_theme.dart';
 import 'patient_info_page.dart';
 import 'doctor_info_page.dart';
 import 'device_setting_page.dart';
-import 'achievement_page.dart'; // 👈 นำเข้า AchievementPage
+import 'achievement_page.dart';
 import '../screens/sign_in_screen.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -20,7 +20,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  bool _isBluetoothConnected = true;
+  bool _isBluetoothConnected = false;
   bool _autoSyncData = true;
   bool _enableReminder = true;
   bool _isLoading = true;
@@ -34,6 +34,7 @@ class _SettingsPageState extends State<SettingsPage> {
   String? _deviceName;
   String? _serialNumber;
   int? _deviceStatus;
+  bool _isDeviceOnline = false; // 🟢 สถานะ Online/Offline จริงจาก Backend
 
   int _totalSessions = 0;
   int _totalMinutes = 0;
@@ -52,12 +53,13 @@ class _SettingsPageState extends State<SettingsPage> {
       final userResult = await AuthService.getMe(widget.userToken!);
       if (userResult['success'] == true) {
         final userData = userResult['user'];
-        final int? userId = userData['user_id'];
+        final int? userId = userData['user_id'] ?? userData['id'];
         final String? imageName = userData['image'];
 
         if (mounted) {
           setState(() {
-            _userName = '${userData['firstname']} ${userData['lastname']}';
+            _userName = '${userData['firstname'] ?? ''} ${userData['lastname'] ?? ''}'.trim();
+            if (_userName.isEmpty) _userName = 'ผู้ป่วย';
             _userEmail = userData['email'] ?? 'patient@health.com';
             _userImage = ApiConfig.getImageUrl(imageName);
             _userId = userId;
@@ -72,6 +74,9 @@ class _SettingsPageState extends State<SettingsPage> {
               _deviceName = deviceData['device_name'];
               _serialNumber = deviceData['serial_number'];
               _deviceStatus = deviceData['device_status'];
+              // 🟢 เช็กสถานะออนไลน์จริงจาก Backend
+              _isDeviceOnline = (deviceData['is_online'] == 1 || deviceData['is_online'] == true);
+              _isBluetoothConnected = _isDeviceOnline;
             });
           }
         }
@@ -197,7 +202,6 @@ class _SettingsPageState extends State<SettingsPage> {
                           if (isDeviceBound) {
                             _showUnbindBottomSheet(context);
                           } else {
-                            // 🛡️ ดักเช็ก _userId ก่อนเปิดหน้าผูกอุปกรณ์
                             if (_userId == null) {
                               ScaffoldMessenger.of(context).showSnackBar(
                                 const SnackBar(
@@ -223,7 +227,7 @@ class _SettingsPageState extends State<SettingsPage> {
                             borderRadius: BorderRadius.circular(16),
                             side: BorderSide(
                               color: isDeviceBound
-                                  ? Colors.green.withOpacity(0.4)
+                                  ? (_isDeviceOnline ? Colors.green.withOpacity(0.4) : Colors.grey.shade300)
                                   : AppTheme.primaryColor.withOpacity(0.3),
                               width: 1.5,
                             ),
@@ -237,7 +241,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
                                     color: isDeviceBound
-                                        ? Colors.green.withOpacity(0.1)
+                                        ? (_isDeviceOnline ? Colors.green.withOpacity(0.1) : Colors.grey.shade100)
                                         : AppTheme.primaryColor.withOpacity(0.1),
                                     shape: BoxShape.circle,
                                   ),
@@ -245,7 +249,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                     isDeviceBound
                                         ? Icons.precision_manufacturing_rounded
                                         : Icons.add_to_queue_rounded,
-                                    color: isDeviceBound ? Colors.green.shade700 : AppTheme.primaryColor,
+                                    color: isDeviceBound 
+                                        ? (_isDeviceOnline ? Colors.green.shade700 : Colors.grey.shade600) 
+                                        : AppTheme.primaryColor,
                                     size: 24,
                                   ),
                                 ),
@@ -254,15 +260,40 @@ class _SettingsPageState extends State<SettingsPage> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        isDeviceBound
-                                            ? (_deviceName ?? 'ถุงมือกลกายภาพบำบัด')
-                                            : 'ยังไม่ได้ผูกอุปกรณ์มือกล',
-                                        style: const TextStyle(
-                                          fontSize: 15,
-                                          fontWeight: FontWeight.bold,
-                                          color: AppTheme.textPrimary,
-                                        ),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            isDeviceBound
+                                                ? (_deviceName ?? 'ถุงมือกลกายภาพบำบัด')
+                                                : 'ยังไม่ได้ผูกอุปกรณ์มือกล',
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.bold,
+                                              color: AppTheme.textPrimary,
+                                            ),
+                                          ),
+                                          if (isDeviceBound) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: _isDeviceOnline ? Colors.green.shade50 : Colors.grey.shade100,
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(
+                                                  color: _isDeviceOnline ? Colors.green.shade300 : Colors.grey.shade300,
+                                                ),
+                                              ),
+                                              child: Text(
+                                                _isDeviceOnline ? 'ออนไลน์' : 'ออฟไลน์',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: _isDeviceOnline ? Colors.green.shade700 : Colors.grey.shade600,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
@@ -289,7 +320,7 @@ class _SettingsPageState extends State<SettingsPage> {
                       ),
                       const SizedBox(height: 24),
 
-                      // 🏆 🏆 [เพิ่มก้อนเมนูใหม่ ✨] กิจกรรมและความสำเร็จ
+                      // 🏆 กิจกรรมและความสำเร็จ
                       _buildSectionTitle('กิจกรรมและความสำเร็จ'),
                       const SizedBox(height: 12),
                       Card(
@@ -358,7 +389,7 @@ class _SettingsPageState extends State<SettingsPage> {
                               ListTile(
                                 leading: Icon(
                                   Icons.bluetooth_rounded,
-                                  color: _isBluetoothConnected
+                                  color: _isDeviceOnline
                                       ? AppTheme.primaryColor
                                       : Colors.grey,
                                 ),
@@ -370,9 +401,9 @@ class _SettingsPageState extends State<SettingsPage> {
                                   ),
                                 ),
                                 subtitle: Text(
-                                  _isBluetoothConnected
-                                      ? 'เชื่อมต่อกับ ${_deviceName ?? "Smart Glove"} แล้ว'
-                                      : 'อุปกรณ์ขาดการเชื่อมต่อ',
+                                  _isDeviceOnline
+                                      ? 'เชื่อมต่อกับ ${_deviceName ?? "Smart Glove"} แล้ว (ออนไลน์)'
+                                      : 'อุปกรณ์ขาดการเชื่อมต่อ (ปิดเครื่องอยู่)',
                                 ),
                                 trailing: Switch(
                                   value: _isBluetoothConnected,
@@ -637,7 +668,14 @@ class _SettingsPageState extends State<SettingsPage> {
             const SizedBox(height: 8),
             Text('Serial Number: $_serialNumber', style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
             const SizedBox(height: 8),
-            const Text('สถานะ: เชื่อมต่อและพร้อมใช้งาน', style: TextStyle(fontSize: 13, color: Colors.green, fontWeight: FontWeight.bold)),
+            Text(
+              _isDeviceOnline ? 'สถานะ: ออนไลน์ (พร้อมใช้งาน)' : 'สถานะ: ออฟไลน์ (ปิดเครื่องอยู่)', 
+              style: TextStyle(
+                fontSize: 13, 
+                color: _isDeviceOnline ? Colors.green : Colors.grey, 
+                fontWeight: FontWeight.bold
+              ),
+            ),
             const SizedBox(height: 28),
 
             SizedBox(

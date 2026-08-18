@@ -32,8 +32,15 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
   List<Map<String, dynamic>> _myPatients = [];
   List<Map<String, dynamic>> _allHistoryLogs = [];
 
+  // 🟢 ช่องค้นหาผู้ป่วยในแท็บ 1
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = "";
+
+  // 🟢 ตัวแปรค้นหา & ตัวกรอง สำหรับแท็บ 2 (ประวัติฝึกรวม)
+  final TextEditingController _historySearchController = TextEditingController();
+  String _historySearchQuery = "";
+  String _selectedHistoryFilter = 'all';
+
   late AnimationController _refreshAnimationController;
 
   @override
@@ -49,8 +56,52 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
   @override
   void dispose() {
     _searchController.dispose();
+    _historySearchController.dispose();
     _refreshAnimationController.dispose();
     super.dispose();
+  }
+
+  // 🟢 Getter ฟังก์ชันสำหรับค้นหาและกรองข้อมูลประวัติการฝึกรวม
+  List<Map<String, dynamic>> get _filteredHistoryLogs {
+    // 1. กรองตามชื่อผู้ป่วยจากช่องค้นหา
+    List<Map<String, dynamic>> result = _allHistoryLogs.where((log) {
+      final name = log['patient_name'].toString().toLowerCase();
+      final q = _historySearchQuery.toLowerCase();
+      return name.contains(q);
+    }).toList();
+
+    // 2. กรองตาม Filter Chips
+    if (_selectedHistoryFilter == 'today') {
+      DateTime now = DateTime.now();
+      return result.where((log) {
+        final dynamic rawDateObj = log['created_at_raw'];
+        if (rawDateObj == null) return false;
+        try {
+          DateTime dt = DateTime.parse(rawDateObj.toString()).toLocal();
+          return dt.year == now.year && dt.month == now.month && dt.day == now.day;
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+    } else if (_selectedHistoryFilter == '7days') {
+      DateTime sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
+      return result.where((log) {
+        final dynamic rawDateObj = log['created_at_raw'];
+        if (rawDateObj == null) return false;
+        try {
+          DateTime dt = DateTime.parse(rawDateObj.toString()).toLocal();
+          return dt.isAfter(sevenDaysAgo);
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+    } else if (_selectedHistoryFilter == 'good') {
+      return result.where((log) => ((log['accuracy_raw'] as num?) ?? 0) >= 80).toList();
+    } else if (_selectedHistoryFilter == 'need_focus') {
+      return result.where((log) => ((log['accuracy_raw'] as num?) ?? 0) < 80).toList();
+    }
+
+    return result; // 'all'
   }
 
   // 📡 ดึงข้อมูลโปรไฟล์หมอ + ผู้ป่วยในการดูแล + ประวัติการฝึกรวม
@@ -67,10 +118,14 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
       final meResult = await AuthService.getMe(widget.doctorToken!);
       if (meResult['success'] == true && meResult['role'] == 'doctor') {
         final doc = meResult['user'];
-        _doctorName = doc['name'] ?? 'นพ. ผู้ดูแล';
-        _doctorSpecialty = doc['specialty'] ?? 'แพทย์ผู้เชี่ยวชาญด้านเวชศาสตร์ฟื้นฟู';
-        _hospitalName = doc['hospital_name'] ?? 'ศูนย์กายภาพบำบัด';
-        _doctorImage = ApiConfig.getImageUrl(doc['image']);
+        final String rolePrefix = doc['role_type'] == 'therapist' ? 'นักกายภาพบำบัด' : 'นพ.';
+        
+        setState(() {
+          _doctorName = ' ${doc['name'] ?? ''}'.trim();
+          _doctorSpecialty = doc['specialty'] ?? 'แพทย์ผู้เชี่ยวชาญด้านเวชศาสตร์ฟื้นฟู';
+          _hospitalName = doc['hospital_name'] ?? 'ศูนย์กายภาพบำบัด';
+          _doctorImage = ApiConfig.getImageUrl(doc['image']);
+        });
       }
 
       // 2. ดึงผู้ป่วยในการดูแลเฉพาะของหมอคนนี้
@@ -127,14 +182,16 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                 timeStr = DateFormat('HH:mm น.').format(dt);
               } catch (_) {}
             }
-            int acc = item['accuracy'] ?? 0;
+            int acc = ((item['accuracy'] as num?) ?? 0).toInt();
             return {
               'patient_name': item['patient_name'] ?? 'ไม่ระบุผู้ป่วย',
               'date': dateStr,
               'time': timeStr,
+              'created_at_raw': item['created_at'],
+              'accuracy_raw': acc,
               'finger': 'นิ้วกล',
-              'max_angle': '${acc}%',
-              'duration': '${((item['duration'] ?? 0) / 60).round()} นาที',
+              'max_angle': '$acc%',
+              'duration': '${(((item['duration'] as num?) ?? 0) / 60).round()} นาที',
               'performance': acc >= 80 ? 'ดีเยี่ยม 📈' : 'ต้องกระตุ้น ⚠️',
               'status_color': acc >= 80 ? Colors.green : Colors.orange,
             };
@@ -312,7 +369,10 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => PatientDetailPage(patientData: patient),
+                              builder: (context) => PatientDetailPage(
+                                patientData: patient,
+                                doctorToken: widget.doctorToken, 
+                              ),
                             ),
                           );
                         },
@@ -348,31 +408,99 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
-  // ==================== 📊 แท็บที่ 2: หน้าประวัติฝึกภาพรวม ====================
+  // ==================== 📊 แท็บที่ 2: หน้าประวัติฝึกภาพรวม (พร้อมช่องค้นหา + ตัวกรอง) ====================
   Widget _buildHistoryTab() {
+    final logs = _filteredHistoryLogs;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.only(left: 24.0, right: 24.0, top: 32.0, bottom: 24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('ประวัติการฝึกซ้อมรวม 📊', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
-          const SizedBox(height: 4),
-          const Text('บันทึกเซสชันกายภาพบำบัดล่าสุดของผู้ป่วยทุกคนในการดูแล', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
-          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('ประวัติการฝึกซ้อมรวม 📊', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
+                  Text('บันทึกเซสชันกายภาพบำบัดของผู้ป่วยในการดูแล', style: TextStyle(fontSize: 12, color: AppTheme.textSecondary)),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded, color: AppTheme.primaryColor),
+                onPressed: _fetchDoctorDataAll,
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
 
-          _allHistoryLogs.isEmpty
+          // 🔍 ช่องค้นหาชื่อผู้ป่วยในแท็บประวัติ
+          TextFormField(
+            controller: _historySearchController,
+            onChanged: (value) => setState(() => _historySearchQuery = value),
+            style: const TextStyle(fontSize: 14),
+            decoration: InputDecoration(
+              hintText: 'ค้นหาด้วยชื่อผู้ป่วย...',
+              hintStyle: TextStyle(color: Colors.grey.withOpacity(0.7), fontSize: 13),
+              prefixIcon: const Icon(Icons.search_rounded, color: Colors.grey),
+              suffixIcon: _historySearchQuery.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear_rounded, size: 18, color: Colors.grey),
+                      onPressed: () {
+                        _historySearchController.clear();
+                        setState(() => _historySearchQuery = "");
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: Colors.grey.withOpacity(0.1))),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: AppTheme.primaryColor, width: 1.5)),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // 🏷️ แถบตัวกรอง Filter Chips
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _buildHistoryFilterChip('ทั้งหมด (${_allHistoryLogs.length})', 'all'),
+                const SizedBox(width: 8),
+                _buildHistoryFilterChip('วันนี้', 'today'),
+                const SizedBox(width: 8),
+                _buildHistoryFilterChip('7 วันล่าสุด', '7days'),
+                const SizedBox(width: 8),
+                _buildHistoryFilterChip('ดีเยี่ยม (≥80%)', 'good'),
+                const SizedBox(width: 8),
+                _buildHistoryFilterChip('ต้องกระตุ้น (<80%)', 'need_focus'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          logs.isEmpty
               ? Container(
                   padding: const EdgeInsets.all(24),
                   width: double.infinity,
-                  decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                  child: const Center(child: Text('ยังไม่มีบันทึกการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13))),
+                  decoration: BoxDecoration(
+                    color: Colors.white, 
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: const Center(
+                    child: Text('ไม่พบรายการประวัติการฝึกตามเงื่อนไขที่ค้นหา', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                  ),
                 )
               : ListView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _allHistoryLogs.length,
+                  itemCount: logs.length,
                   itemBuilder: (context, index) {
-                    final log = _allHistoryLogs[index];
+                    final log = logs[index];
                     return Card(
                       margin: const EdgeInsets.symmetric(vertical: 8),
                       elevation: 0,
@@ -429,6 +557,36 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
     );
   }
 
+  // 🟢 Widget สำหรับสร้างปุ่ม Filter Chip ในแท็บประวัติ
+  Widget _buildHistoryFilterChip(String label, String value) {
+    bool isSelected = _selectedHistoryFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      selectedColor: AppTheme.primaryColor,
+      backgroundColor: Colors.grey.shade100,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : AppTheme.textPrimary,
+        fontSize: 12,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isSelected ? AppTheme.primaryColor : Colors.grey.shade300,
+        ),
+      ),
+      showCheckmark: false,
+      onSelected: (selected) {
+        if (selected) {
+          setState(() {
+            _selectedHistoryFilter = value;
+          });
+        }
+      },
+    );
+  }
+
   // ==================== ⚙️ แท็บที่ 3: หน้าตั้งค่า + แก้ไขโปรไฟล์หมอ ====================
   Widget _buildProfileSettingTab() {
     return SingleChildScrollView(
@@ -461,7 +619,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                 
                 ElevatedButton.icon(
                   onPressed: () async {
-                    // 🔑 แนบ doctorToken ไปด้วยเพื่อดึงข้อมูลเก่ามาโชว์ใน Input
                     final isSaved = await Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -469,7 +626,6 @@ class _DoctorDashboardPageState extends State<DoctorDashboardPage> with SingleTi
                       ),
                     );
 
-                    // พอกดบันทึกและย้อนกลับมา ให้ดึงข้อมูลหมอใหม่ทันที
                     if (isSaved == true) {
                       _fetchDoctorDataAll(); 
                     }

@@ -7,9 +7,13 @@ class Step2MedicalForm extends StatefulWidget {
   final TextEditingController genderController;
   final TextEditingController symptomController;
   final TextEditingController emergencyPhoneController;
+  final int? selectedHospitalId;
   final String? selectedDoctorId;
-  final List<Map<String, String>> doctorsList; // 🩺 รับรายชื่อหมอจริงจาก MySQL
-  final bool isLoadingDoctors;                 // ⏳ รับสเตตัสการโหลดข้อมูลหมอ
+  final List<Map<String, dynamic>> hospitalsList;
+  final List<Map<String, dynamic>> doctorsList;
+  final bool isLoadingHospitals;
+  final bool isLoadingDoctors;
+  final ValueChanged<int?> onHospitalSelected;
   final ValueChanged<String?> onDoctorSelected;
   final VoidCallback onNext;
   final VoidCallback onPrev;
@@ -21,9 +25,13 @@ class Step2MedicalForm extends StatefulWidget {
     required this.genderController,
     required this.symptomController,
     required this.emergencyPhoneController,
+    required this.selectedHospitalId,
     required this.selectedDoctorId,
+    required this.hospitalsList,
     required this.doctorsList,
+    required this.isLoadingHospitals,
     required this.isLoadingDoctors,
+    required this.onHospitalSelected,
     required this.onDoctorSelected,
     required this.onNext,
     required this.onPrev,
@@ -34,6 +42,15 @@ class Step2MedicalForm extends StatefulWidget {
 }
 
 class _Step2MedicalFormState extends State<Step2MedicalForm> {
+  // กรองแพทย์ตามโรงพยาบาลที่เลือก
+  List<Map<String, dynamic>> get _filteredDoctors {
+    if (widget.selectedHospitalId == null) return [];
+    return widget.doctorsList.where((doc) {
+      final docHospId = doc['hospital_id'];
+      return docHospId == widget.selectedHospitalId || docHospId == null;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
@@ -45,7 +62,7 @@ class _Step2MedicalFormState extends State<Step2MedicalForm> {
           children: [
             const Text('ข้อมูลอาการผู้ป่วย 🏥', style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: AppTheme.textPrimary)),
             const SizedBox(height: 4),
-            const Text('ขั้นตอนที่ 2: ระบุรายละเอียดอาการเพื่อใช้ออกแบบแผนฟื้นฟู', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+            const Text('ขั้นตอนที่ 2: ระบุรายละเอียดอาการและเลือกหน่วยงานผู้ดูแล', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
             const SizedBox(height: 32),
 
             Row(
@@ -71,11 +88,17 @@ class _Step2MedicalFormState extends State<Step2MedicalForm> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _buildInputLabel('เพศ'),
-                      TextFormField(
-                        controller: widget.genderController,
-                        style: const TextStyle(fontSize: 14),
-                        decoration: _buildDecoration('ชาย / หญิง', Icons.wc_rounded),
-                        validator: (v) => v == null || v.isEmpty ? 'ระบุเพศ' : null,
+                      DropdownButtonFormField<String>(
+                        value: widget.genderController.text.isNotEmpty ? widget.genderController.text : null,
+                        items: const [
+                          DropdownMenuItem(value: 'ชาย', child: Text('ชาย', style: TextStyle(fontSize: 14))),
+                          DropdownMenuItem(value: 'หญิง', child: Text('หญิง', style: TextStyle(fontSize: 14))),
+                        ],
+                        onChanged: (val) {
+                          if (val != null) widget.genderController.text = val;
+                        },
+                        decoration: _buildDecoration('เลือกเพศ', Icons.wc_rounded),
+                        validator: (v) => widget.genderController.text.isEmpty ? 'ระบุเพศ' : null,
                       ),
                     ],
                   ),
@@ -94,68 +117,110 @@ class _Step2MedicalFormState extends State<Step2MedicalForm> {
             ),
             const SizedBox(height: 20),
 
-            // 🩺 [UPDATED]: ช่องเลือกแพทย์ประจำตัวที่ดึงข้อมูลจริงมาจาก MySQL
-            _buildInputLabel('แพทย์ผู้เชี่ยวชาญประจำตัว'),
+            // 🏥 ช่องเลือกโรงพยาบาล/ศูนย์กายภาพ
+            _buildInputLabel('โรงพยาบาล / ศูนย์กายภาพบำบัดที่รับการรักษา'),
+            widget.isLoadingHospitals
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12.0),
+                    child: Row(
+                      children: [
+                        SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor)),
+                        SizedBox(width: 12),
+                        Text('กำลังโหลดรายชื่อโรงพยาบาล...', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                      ],
+                    ),
+                  )
+                : DropdownButtonFormField<int>(
+                    value: widget.selectedHospitalId,
+                    isExpanded: true,
+                    items: widget.hospitalsList.map((hosp) {
+                      return DropdownMenuItem<int>(
+                        value: hosp['hospital_id'] as int,
+                        child: Text(
+                          hosp['hospital_name'] as String,
+                          style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      widget.onHospitalSelected(val);
+                      widget.onDoctorSelected(null); // ล้างค่าหมอเดิมเมื่อเปลี่ยนโรงพยาบาล
+                    },
+                    decoration: _buildDecoration('เลือกโรงพยาบาล / ศูนย์ฟื้นฟู', Icons.local_hospital_rounded),
+                    validator: (v) => v == null ? 'กรุณาเลือกโรงพยาบาลที่เข้ารับการรักษา' : null,
+                  ),
+            const SizedBox(height: 20),
+
+            // 🩺 ช่องเลือกแพทย์/นักกายภาพบำบัด
+            _buildInputLabel('แพทย์ / นักกายภาพบำบัดผู้ดูแล'),
             widget.isLoadingDoctors
                 ? const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12.0),
                     child: Row(
                       children: [
-                        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor)),
+                        SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primaryColor)),
                         SizedBox(width: 12),
-                        Text('กำลังโหลดรายชื่อแพทย์จากระบบ...', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                        Text('กำลังโหลดรายชื่อแพทย์...', style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
                       ],
                     ),
                   )
-                : Autocomplete<Map<String, String>>(
-                    displayStringForOption: (doc) => doc['name']!,
-                    optionsBuilder: (textVal) {
-                      if (textVal.text.isEmpty) return widget.doctorsList;
-                      return widget.doctorsList.where((d) => d['name']!.toLowerCase().contains(textVal.text.toLowerCase()));
-                    },
-                    onSelected: (doc) => widget.onDoctorSelected(doc['id']),
-                    fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
-                      return TextFormField(
-                        controller: ctrl,
-                        focusNode: focusNode,
+                : widget.selectedHospitalId == null
+                    ? TextFormField(
+                        enabled: false,
                         style: const TextStyle(fontSize: 14),
-                        decoration: _buildDecoration(
-                          widget.doctorsList.isEmpty ? 'ไม่พบรายชื่อแพทย์ในระบบ' : 'พิมพ์ค้นหาชื่อแพทย์ผู้รักษา...', 
-                          Icons.person_search_rounded
-                        ),
-                        validator: (v) => widget.selectedDoctorId == null ? 'กรุณาเลือกแพทย์ผู้ดูแลจากรายการ' : null,
-                      );
-                    },
-                    optionsViewBuilder: (context, onSelected, options) {
-                      return Align(
-                        alignment: Alignment.topLeft,
-                        child: Material(
-                          elevation: 4,
-                          borderRadius: BorderRadius.circular(14),
-                          color: Colors.white,
-                          child: Container(
-                            width: MediaQuery.of(context).size.width - 60,
-                            constraints: const BoxConstraints(maxHeight: 200),
-                            child: ListView.builder(
-                              padding: EdgeInsets.zero,
-                              shrinkWrap: true,
-                              itemCount: options.length,
-                              itemBuilder: (BuildContext context, int index) {
-                                final option = options.elementAt(index);
-                                return InkWell(
-                                  onTap: () => onSelected(option),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                                    child: Text(option['name']!, style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
-                                  ),
-                                );
-                              },
+                        decoration: _buildDecoration('⚠️ กรุณาเลือกโรงพยาบาลก่อนเลือกแพทย์', Icons.person_search_rounded),
+                      )
+                    : Autocomplete<Map<String, dynamic>>(
+                        key: ValueKey(widget.selectedHospitalId),
+                        displayStringForOption: (doc) => doc['name'] as String,
+                        optionsBuilder: (textVal) {
+                          if (textVal.text.isEmpty) return _filteredDoctors;
+                          return _filteredDoctors.where((d) => (d['name'] as String).toLowerCase().contains(textVal.text.toLowerCase()));
+                        },
+                        onSelected: (doc) => widget.onDoctorSelected(doc['id'] as String),
+                        fieldViewBuilder: (ctx, ctrl, focusNode, onSubmit) {
+                          return TextFormField(
+                            controller: ctrl,
+                            focusNode: focusNode,
+                            style: const TextStyle(fontSize: 14),
+                            decoration: _buildDecoration(
+                              _filteredDoctors.isEmpty ? 'ไม่พบบุคลากรในโรงพยาบาลนี้' : 'พิมพ์ค้นหาแพทย์/นักกายภาพ...',
+                              Icons.person_search_rounded,
                             ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+                            validator: (v) => widget.selectedDoctorId == null ? 'กรุณาเลือกแพทย์หรือนักกายภาพบำบัด' : null,
+                          );
+                        },
+                        optionsViewBuilder: (context, onSelected, options) {
+                          return Align(
+                            alignment: Alignment.topLeft,
+                            child: Material(
+                              elevation: 4,
+                              borderRadius: BorderRadius.circular(14),
+                              color: Colors.white,
+                              child: Container(
+                                width: MediaQuery.of(context).size.width - 60,
+                                constraints: const BoxConstraints(maxHeight: 200),
+                                child: ListView.builder(
+                                  padding: EdgeInsets.zero,
+                                  shrinkWrap: true,
+                                  itemCount: options.length,
+                                  itemBuilder: (BuildContext context, int index) {
+                                    final option = options.elementAt(index);
+                                    return InkWell(
+                                      onTap: () => onSelected(option),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                                        child: Text(option['name'] as String, style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
             const SizedBox(height: 20),
 
             _buildInputLabel('เบอร์โทรศัพท์ติดต่อฉุกเฉิน (ญาติ/ผู้ดูแล)'),

@@ -19,6 +19,45 @@ class _HistoryPageState extends State<HistoryPage> {
 
   bool _isLoading = true;
   List<Map<String, dynamic>> _rawHistoryList = [];
+  
+  // 🟢 ตัวแปรเก็บ Filter ที่เลือก ('all', 'today', '7days', 'high_acc')
+  String _selectedFilter = 'all';
+
+  // 🟢 Getter ฟังก์ชันสำหรับกรองข้อมูล _rawHistoryList
+  List<Map<String, dynamic>> get _filteredHistoryList {
+    if (_selectedFilter == 'today') {
+      DateTime now = DateTime.now();
+      return _rawHistoryList.where((item) {
+        String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
+        if (rawDate.isEmpty) return false;
+        try {
+          DateTime dt = _parseToLocalDateTime(rawDate);
+          return dt.year == now.year && dt.month == now.month && dt.day == now.day;
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+    } else if (_selectedFilter == '7days') {
+      DateTime sevenDaysAgo = DateTime.now().subtract(const Duration(days: 7));
+      return _rawHistoryList.where((item) {
+        String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
+        if (rawDate.isEmpty) return false;
+        try {
+          DateTime dt = _parseToLocalDateTime(rawDate);
+          return dt.isAfter(sevenDaysAgo);
+        } catch (_) {
+          return false;
+        }
+      }).toList();
+    } else if (_selectedFilter == 'high_acc') {
+      return _rawHistoryList.where((item) {
+        num accuracy = item['accuracy'] as num? ?? 0;
+        return accuracy >= 80;
+      }).toList();
+    }
+    
+    return _rawHistoryList; // 'all'
+  }
 
   // Map ค่าชื่อเดือนเป็นหมายเลขเดือน (1-12)
   final Map<String, int> _monthMap = {
@@ -379,7 +418,7 @@ class _HistoryPageState extends State<HistoryPage> {
                   ),
                   const SizedBox(height: 28),
 
-                  // 📋 รายการบันทึกการฝึกซ้อมย้อนหลัง (เรียงล่าสุดอยู่อันแรก + แสดง 10 รายการแรก)
+                  // 📋 รายการบันทึกการฝึกย้อนหลัง (พร้อม Filter Chips)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -399,7 +438,7 @@ class _HistoryPageState extends State<HistoryPage> {
                           ),
                           const SizedBox(width: 10),
                           Text(
-                            'บันทึกการฝึกซ้อม (${_rawHistoryList.length < _displayLimit ? _rawHistoryList.length : _displayLimit}/${_rawHistoryList.length})',
+                            'บันทึกการฝึก (${_filteredHistoryList.length < _displayLimit ? _filteredHistoryList.length : _displayLimit}/${_filteredHistoryList.length})',
                             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppTheme.textPrimary),
                           ),
                         ],
@@ -407,21 +446,38 @@ class _HistoryPageState extends State<HistoryPage> {
                       IconButton(
                         icon: const Icon(Icons.refresh_rounded, size: 20, color: AppTheme.primaryColor),
                         onPressed: () {
-                          setState(() => _displayLimit = 10); // 🟢 รีเซ็ต limit เป็น 10 รายการเมื่อ refresh
+                          setState(() => _displayLimit = 10);
                           _fetchHistoryData();
                         },
                       )
                     ],
                   ),
+                  const SizedBox(height: 8),
+
+                  // 🏷️ แถบ Filter Chips
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _buildFilterChip('ทั้งหมด', 'all'),
+                        const SizedBox(width: 8),
+                        _buildFilterChip('วันนี้', 'today'),
+                        const SizedBox(width: 8),
+                        _buildFilterChip('7 วันล่าสุด', '7days'),
+                        const SizedBox(width: 8),
+                        _buildFilterChip('แม่นยำสูง (≥80%)', 'high_acc'),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 12),
 
-                  _rawHistoryList.isEmpty
+                  _filteredHistoryList.isEmpty
                       ? Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(24),
                           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
                           child: const Center(
-                            child: Text('ยังไม่มีบันทึกการฝึกซ้อมในระบบ', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                            child: Text('ไม่พบรายการประวัติการฝึกตามเงื่อนไขที่เลือก', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
                           ),
                         )
                       : Column(
@@ -429,16 +485,16 @@ class _HistoryPageState extends State<HistoryPage> {
                             ListView.builder(
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _rawHistoryList.length < _displayLimit ? _rawHistoryList.length : _displayLimit,
+                              itemCount: _filteredHistoryList.length < _displayLimit ? _filteredHistoryList.length : _displayLimit,
                               itemBuilder: (context, index) {
-                                // 🟢 ดึงข้อมูลตาม Index (เพราะถูกจัดเรียง DESC แล้วใน _fetchHistoryData)
-                                final item = _rawHistoryList[index];
+                                // 🟢 ดึงข้อมูลจาก _filteredHistoryList
+                                final item = _filteredHistoryList[index];
                                 final int count = item['count'] ?? 0;
                                 final int accuracy = (item['accuracy'] as num? ?? 0).round();
                                 final int duration = item['duration'] ?? 0;
                                 final String rawDate = item['created_at']?.toString() ?? item['train_date']?.toString() ?? '';
 
-                                String formattedDate = 'ฝึกซ้อมกายภาพ';
+                                String formattedDate = 'ฝึกกายภาพ';
                                 if (rawDate.isNotEmpty) {
                                   try {
                                     DateTime dt = _parseToLocalDateTime(rawDate);
@@ -573,7 +629,7 @@ class _HistoryPageState extends State<HistoryPage> {
                             ),
 
                             // 🟢 ปุ่ม "แสดงประวัติเพิ่มเติม (+10)"
-                            if (_rawHistoryList.length > _displayLimit)
+                            if (_filteredHistoryList.length > _displayLimit)
                               Padding(
                                 padding: const EdgeInsets.only(top: 12.0, bottom: 8.0),
                                 child: SizedBox(
@@ -587,12 +643,12 @@ class _HistoryPageState extends State<HistoryPage> {
                                     ),
                                     onPressed: () {
                                       setState(() {
-                                        _displayLimit += 10; // เพิ่มรายการที่แสดงผลทีละ 10
+                                        _displayLimit += 10;
                                       });
                                     },
                                     icon: const Icon(Icons.keyboard_arrow_down_rounded),
                                     label: Text(
-                                      'แสดงประวัติเพิ่มเติม (เหลืออีก ${_rawHistoryList.length - _displayLimit} รายการ)',
+                                      'แสดงประวัติเพิ่มเติม (เหลืออีก ${_filteredHistoryList.length - _displayLimit} รายการ)',
                                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                                     ),
                                   ),
@@ -600,6 +656,7 @@ class _HistoryPageState extends State<HistoryPage> {
                               ),
                           ],
                         ),
+                  const SizedBox(height: 20),
                 ],
               ),
             ),
@@ -675,6 +732,36 @@ class _HistoryPageState extends State<HistoryPage> {
           ],
         ),
       ),
+    );
+  }
+
+  // 🟢 Widget สร้างปุ่ม Filter Chip สวยๆ
+  Widget _buildFilterChip(String label, String value) {
+    bool isSelected = _selectedFilter == value;
+    return ChoiceChip(
+      label: Text(label),
+      selected: isSelected,
+      selectedColor: AppTheme.primaryColor,
+      backgroundColor: Colors.grey.shade100,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : AppTheme.textPrimary,
+        fontSize: 12,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(
+          color: isSelected ? AppTheme.primaryColor : Colors.grey.shade300,
+        ),
+      ),
+      showCheckmark: false,
+      onSelected: (selected) {
+        if (selected) {
+          setState(() {
+            _selectedFilter = value;
+          });
+        }
+      },
     );
   }
 }

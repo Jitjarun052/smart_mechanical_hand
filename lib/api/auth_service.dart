@@ -53,6 +53,7 @@ class AuthService {
     required String gender,
     required String symptoms,
     required String emergencyPhone,
+    int? hospitalId,
     String? doctorId,
     String? serialNumber,
     String? deviceName,
@@ -74,6 +75,7 @@ class AuthService {
       request.fields['symptoms'] = symptoms;
       request.fields['emergency_phone'] = emergencyPhone;
       
+      if (hospitalId != null) request.fields['hospital_id'] = hospitalId.toString();
       if (doctorId != null) request.fields['doctor_code'] = doctorId;
       if (serialNumber != null && serialNumber.isNotEmpty) {
         request.fields['serial_number'] = serialNumber;
@@ -111,21 +113,25 @@ class AuthService {
     }
   }
 
-  // เพิ่มลงใน AuthService หรือ UserService
+  // ฟังก์ชัน getMe ใน AuthService
   static Future<Map<String, dynamic>> getMe(String token) async {
     try {
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/user/me'),
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token', // 🔑 แนบ Token ส่งไปให้ getMe ใน Node.js
+          'Authorization': 'Bearer $token',
         },
       );
 
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['status'] == 'success') {
-        return {'success': true, 'user': data['user']};
+        return {
+          'success': true,
+          'role': data['role'] ?? '', // 👈 คืนค่า role ('doctor' หรือ 'patient')
+          'user': data['user'] ?? {},
+        };
       } else {
         return {'success': false, 'message': data['error'] ?? 'ดึงข้อมูลผู้ใช้ล้มเหลว'};
       }

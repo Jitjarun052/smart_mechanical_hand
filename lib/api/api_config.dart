@@ -1,11 +1,14 @@
 class ApiConfig {
   
   // static const String host = '10.29.16.212:5000';     
-  static const String host = '192.168.1.119:5000';     
+  // static const String host = '10.10.104.29:5000';     
+  // static const String host = '10.143.115.212:5000';     
+  // static const String host = 'localhost:5000';
+  static const String host = 'glove.dogdac.com';     
 
   // 🔗 URL หลัก (นำ host ข้างบนมาต่ออัตโนมัติ)
-  static const String baseUrl = 'http://$host/api';
-  static const String imageBaseUrl = 'http://$host/uploads';
+  static const String baseUrl = 'https://$host/api';
+  static const String imageBaseUrl = 'https://$host/uploads';
 
   // 📝 Standard Headers
   static const Map<String, String> headers = {

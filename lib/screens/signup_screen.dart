@@ -46,8 +46,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   bool _acceptTerms = false;
 
-  List<Map<String, String>> _doctorsList = [];
+  List<Map<String, dynamic>> _doctorsList = [];
   bool _isLoadingDoctors = true;
+
+  int? _selectedHospitalId;
+  List<Map<String, dynamic>> _hospitalsList = [
+    {'hospital_id': 1, 'hospital_name': 'โรงพยาบาลศูนย์กายภาพบำบัด'},
+    {'hospital_id': 2, 'hospital_name': 'โรงพยาบาลเชียงรายเวชการ'},
+    {'hospital_id': 3, 'hospital_name': 'ศูนย์ฟื้นฟูสมรรถภาพการแพทย์ภาคเหนือ'},
+  ];
+  bool _isLoadingHospitals = false;
 
   @override
   void initState() {
@@ -134,6 +142,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       gender: _genderController.text.trim(),
       symptoms: _symptomController.text.trim(),
       emergencyPhone: _emergencyPhoneController.text.trim(),
+      hospitalId: _selectedHospitalId,
       doctorId: _selectedDoctorId,
       serialNumber: isSkipDevice ? null : _serialNumberController.text.trim(),
       deviceName: isSkipDevice ? null : _deviceNameController.text.trim(),
@@ -242,9 +251,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     genderController: _genderController,
                     symptomController: _symptomController,
                     emergencyPhoneController: _emergencyPhoneController,
+                    selectedHospitalId: _selectedHospitalId,
                     selectedDoctorId: _selectedDoctorId,
-                    doctorsList: _doctorsList,         // 👈 ส่งหมอที่ดึงมาจาก MySQL
+                    hospitalsList: _hospitalsList,
+                    doctorsList: _doctorsList,
+                    isLoadingHospitals: _isLoadingHospitals,
                     isLoadingDoctors: _isLoadingDoctors,
+                    onHospitalSelected: (hospId) => setState(() => _selectedHospitalId = hospId),
                     onDoctorSelected: (docId) => setState(() => _selectedDoctorId = docId),
                     onNext: _nextStep,
                     onPrev: _prevStep,
